@@ -1,0 +1,109 @@
+# ── QuizForge — docker-compose.yml ────────────────────────────────────────────
+# Runs: PostgreSQL + Backend (FastAPI) + Frontend (React/nginx)
+#
+# Usage:
+#   cp .env.example .env          # fill in your values
+#   docker compose up --build     # first run
+#   docker compose up -d          # subsequent runs (detached)
+#   docker compose down           # stop
+#   docker compose down -v        # stop + delete volumes (wipes DB)
+
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL database ──────────────────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER:     ${POSTGRES_USER:-quizforge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-quizforge123}
+      POSTGRES_DB:       ${POSTGRES_DB:-quizforge_db}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-quizforge}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - quizforge-net
+
+  # ── FastAPI backend ──────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:                  postgresql+asyncpg://${POSTGRES_USER:-quizforge}:${POSTGRES_PASSWORD:-quizforge123}@db:5432/${POSTGRES_DB:-quizforge_db}
+      SECRET_KEY:                    ${SECRET_KEY:-change-this-in-production-min-32-chars}
+      ALGORITHM:                     HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES:   ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      REFRESH_TOKEN_EXPIRE_DAYS:     ${REFRESH_TOKEN_EXPIRE_DAYS:-7}
+      OPENROUTER_API_KEY:            ${OPENROUTER_API_KEY}
+      OPENROUTER_MODEL:              ${OPENROUTER_MODEL:-meta-llama/llama-3.1-8b-instruct:free}
+      FRONTEND_URL:                  ${FRONTEND_URL:-http://localhost}
+      UPLOAD_DIR:                    uploads
+      SEED_ADMIN_EMAIL:              ${SEED_ADMIN_EMAIL:-admin@quizforge.com}
+      SEED_ADMIN_PASSWORD:           ${SEED_ADMIN_PASSWORD:-Admin@123}
+      SEED_STUDENT_EMAIL:            ${SEED_STUDENT_EMAIL:-student@quizforge.com}
+      SEED_STUDENT_PASSWORD:         ${SEED_STUDENT_PASSWORD:-Student@123}
+    volumes:
+      - uploads:/app/uploads
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - quizforge-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ── React frontend (nginx) ───────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_BACKEND_URL: ${VITE_BACKEND_URL:-http://localhost:8000}
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - quizforge-net
+
+  # ── Seed runner (runs once, exits) ──────────────────────────────────────────
+  seed:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: python seed.py
+    environment:
+      DATABASE_URL:         postgresql+asyncpg://${POSTGRES_USER:-quizforge}:${POSTGRES_PASSWORD:-quizforge123}@db:5432/${POSTGRES_DB:-quizforge_db}
+      SEED_ADMIN_EMAIL:     ${SEED_ADMIN_EMAIL:-admin@quizforge.com}
+      SEED_ADMIN_PASSWORD:  ${SEED_ADMIN_PASSWORD:-Admin@123}
+      SEED_STUDENT_EMAIL:   ${SEED_STUDENT_EMAIL:-student@quizforge.com}
+      SEED_STUDENT_PASSWORD:${SEED_STUDENT_PASSWORD:-Student@123}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - quizforge-net
+    profiles:
+      - seed   # only runs when: docker compose --profile seed up seed
+
+volumes:
+  pgdata:
+  uploads:
+
+networks:
+  quizforge-net:
+    driver: bridge
