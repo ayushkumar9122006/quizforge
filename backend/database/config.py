@@ -15,6 +15,11 @@ def normalize_db_url(url: str) -> str:
         url = url.replace("postgres://", "postgresql+asyncpg://", 1)
     elif url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
         url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "sslmode=require" in url:
+        url = url.replace("sslmode=require", "ssl=require")
+    elif "sslmode=" in url:
+        import re
+        url = re.sub(r'sslmode=[^&]+', 'ssl=require', url)
     return url
 
 
