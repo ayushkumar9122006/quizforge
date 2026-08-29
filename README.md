@@ -34,7 +34,7 @@ QuizForge is a full-stack, real-time quiz platform:
 
 ### Clone & install
 ```bash
-git clone <this-repo>
+git clone https://github.com/ayushkumar9122006/quizforge
 cd quizforge
 
 # Backend
