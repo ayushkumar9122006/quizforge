@@ -40,8 +40,8 @@ class AttemptSubmit(BaseModel):
 class LeaderboardEntryOut(BaseModel):
     rank: int
     student_name: str
-    score: int
-    total_marks: int
+    score: float
+    total_marks: float
     accuracy: float
     time_taken_sec: int
     submitted_at: Optional[datetime] = None
@@ -53,8 +53,8 @@ class AttemptOut(BaseModel):
     id: str
     session_id: str
     student_id: str
-    score: int
-    total_marks: int
+    score: float
+    total_marks: float
     status: AttemptStatus
     started_at: datetime
     submitted_at: Optional[datetime] = None
@@ -75,8 +75,32 @@ class AnswerResultOut(BaseModel):
     selected_option: Optional[int] = None
     correct_answer: Optional[int] = None
     is_correct: bool
-    marks_awarded: int
+    marks_awarded: float
 
 
 class AttemptResultOut(AttemptOut):
     results: List[AnswerResultOut] = []
+
+
+class StudentAttemptHistoryItemOut(BaseModel):
+    id: str
+    session_id: str
+    student_id: str
+    quiz_id: str
+    quiz_title: str
+    score: float
+    total_marks: float
+    percentage: float
+    status: AttemptStatus
+    auto: bool = False
+    started_at: datetime
+    submitted_at: Optional[datetime] = None
+    date: str
+    time_taken_sec: int
+    rank: Optional[int] = None
+    has_solution_pdf: bool = False
+    solution_pdf_name: Optional[str] = None
+    questions: List[dict] = []
+    answers: dict = {}
+    section_breakdown: List[dict] = []
+    question_times: dict = {}

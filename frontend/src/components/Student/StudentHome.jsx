@@ -1,6 +1,6 @@
 import { usePublishedQuizzes } from '../../hooks/usePublishedQuizzes.js'
 
-export default function StudentHome({ user, onTake, onHistory, onLogout, histCount }) {
+export default function StudentHome({ user, onTake, onHistory, onAnalytics, onLogout, histCount }) {
   const { quizzes, loading, error } = usePublishedQuizzes()
 
   return (
@@ -43,9 +43,9 @@ export default function StudentHome({ user, onTake, onHistory, onLogout, histCou
               style={{ background:'#fff', borderRadius:16, border:'1.5px solid #e5e7eb', overflow:'hidden', transition:'box-shadow .15s' }}
               onMouseEnter={e => e.currentTarget.style.boxShadow='0 6px 24px rgba(0,0,0,.08)'}
               onMouseLeave={e => e.currentTarget.style.boxShadow='none'}>
-              <div style={{ padding:'1.1rem 1.4rem', display:'flex', alignItems:'center', gap:15 }}>
+              <div style={{ padding:'1.1rem 1.4rem', display:'flex', alignItems:'center', gap:15, flexWrap:'wrap' }}>
                 <div style={{ width:50,height:50,borderRadius:14,background:'linear-gradient(135deg,#ede9fe,#ddd6fe)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0 }}>📝</div>
-                <div style={{ flex:1 }}>
+                <div style={{ flex:1, minWidth:200 }}>
                   <div style={{ fontWeight:800,fontSize:16,color:'#111827',marginBottom:4 }}>{quiz.title}</div>
                   <div style={{ fontSize:12,color:'#6b7280',display:'flex',gap:13,flexWrap:'wrap',marginBottom:secs.length>1?5:0 }}>
                     <span>📝 {quiz.questions?.length ?? 0} questions</span>
@@ -58,7 +58,17 @@ export default function StudentHome({ user, onTake, onHistory, onLogout, histCou
                     </div>
                   )}
                 </div>
-                <button className="btn-pri" onClick={() => onTake(quiz)}>Start →</button>
+                <div style={{ display:'flex', gap:8, flexShrink:0 }}>
+                  {onAnalytics && (
+                    <button
+                      className="btn-sec"
+                      style={{ fontSize:12, padding:'6px 12px' }}
+                      onClick={() => onAnalytics(quiz)}>
+                      📊 Analytics
+                    </button>
+                  )}
+                  <button className="btn-pri" onClick={() => onTake(quiz)}>Start →</button>
+                </div>
               </div>
             </div>
           )

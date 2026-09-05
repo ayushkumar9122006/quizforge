@@ -29,7 +29,9 @@ class QuestionCreate(BaseModel):
     content_type: ContentType = ContentType.text
     correct_answer: Optional[int] = None
     explanation: Optional[str] = None
-    marks: int = 1
+    marks: float = 1.0
+    positive_marks: float = Field(default=1.0, ge=0.0)
+    negative_marks: float = Field(default=0.0, ge=0.0)
     diagram: Optional[str] = None
     options: List[OptionCreate] = []
 
@@ -43,7 +45,9 @@ class QuestionOut(BaseModel):
     content_type: ContentType
     correct_answer: Optional[int] = None
     explanation: Optional[str] = None
-    marks: int
+    marks: float
+    positive_marks: float = 1.0
+    negative_marks: float = 0.0
     diagram: Optional[str] = None
     options: List[OptionOut] = []
     created_at: datetime
@@ -54,6 +58,9 @@ class QuestionOut(BaseModel):
 class QuizCreate(BaseModel):
     title: str = Field(min_length=2, max_length=500)
     description: Optional[str] = None
+    instructions: Optional[str] = None
+    solution_pdf: Optional[str] = None
+    solution_pdf_name: Optional[str] = None
     time_per_q_sec: int = Field(default=300, ge=10, le=3600)
     is_public: bool = False
     tags: Optional[List[str]] = None
@@ -65,6 +72,9 @@ class QuizCreate(BaseModel):
 class QuizUpdate(BaseModel):
     title: Optional[str] = None
     description: Optional[str] = None
+    instructions: Optional[str] = None
+    solution_pdf: Optional[str] = None
+    solution_pdf_name: Optional[str] = None
     time_per_q_sec: Optional[int] = None
     status: Optional[QuizStatus] = None
     is_public: Optional[bool] = None
@@ -77,9 +87,12 @@ class QuizOut(BaseModel):
     id: str
     title: str
     description: Optional[str] = None
+    instructions: Optional[str] = None
+    solution_pdf: Optional[str] = None
+    solution_pdf_name: Optional[str] = None
     status: QuizStatus
     time_per_q_sec: int
-    total_marks: int
+    total_marks: float
     is_public: bool
     tags: Optional[List[str]] = None
     subject: Optional[str] = None
@@ -104,7 +117,9 @@ class QuestionStudentOut(BaseModel):
     text: str
     question_image: Optional[str] = None
     content_type: ContentType
-    marks: int
+    marks: float
+    positive_marks: float = 1.0
+    negative_marks: float = 0.0
     diagram: Optional[str] = None
     options: List[OptionOut] = []
     created_at: datetime
@@ -117,9 +132,12 @@ class QuizStudentOut(BaseModel):
     id: str
     title: str
     description: Optional[str] = None
+    instructions: Optional[str] = None
+    solution_pdf: Optional[str] = None
+    solution_pdf_name: Optional[str] = None
     status: QuizStatus
     time_per_q_sec: int
-    total_marks: int
+    total_marks: float
     is_public: bool
     tags: Optional[List[str]] = None
     subject: Optional[str] = None
@@ -136,9 +154,12 @@ class QuizListOut(BaseModel):
     id: str
     title: str
     description: Optional[str] = None
+    instructions: Optional[str] = None
+    solution_pdf: Optional[str] = None
+    solution_pdf_name: Optional[str] = None
     status: QuizStatus
     time_per_q_sec: int
-    total_marks: int
+    total_marks: float
     subject: Optional[str] = None
     difficulty: Optional[str] = None
     question_count: int = 0

@@ -40,3 +40,8 @@ export async function endSession(sessionId) {
   const { data } = await api.post(`/sessions/${sessionId}/end`)
   return data
 }
+
+export async function getMyAttempts() {
+  const { data } = await api.get('/sessions/attempts/my')
+  return data
+}

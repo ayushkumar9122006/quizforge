@@ -2,7 +2,8 @@ import { useState } from 'react'
 import Lightbox from '../Common/Lightbox.jsx'
 import LiveLeaderboard from './LiveLeaderboard.jsx'
 import { getExplanation } from '../../services/llmService.js'
-import { formatTime } from '../../services/utils.js'
+import { formatDuration } from '../../services/utils.js'
+import { viewSolutionPdf } from '../../services/quizService.js'
 
 const LABELS = ['A','B','C','D','E','F']
 
@@ -16,13 +17,31 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
 
   const score = result.score ?? 0
   const totalQuestions = questions.length || 1
-  const pct = Math.round((score / totalQuestions) * 100)
+  const totalMarks = result.total_marks ?? questions.reduce((sum, q) => sum + (Number(q.positive_marks ?? q.marks ?? 4)), 0)
+  const pct = totalMarks > 0 ? Math.max(0, Math.round((score / totalMarks) * 100)) : 0
   const sc  = pct >= 70 ? '#059669' : pct >= 40 ? '#d97706' : '#dc2626'
   const sbg = pct >= 70 ? '#d1fae5' : pct >= 40 ? '#fef3c7' : '#fee2e2'
 
+  // Correct / Wrong / Skipped counts
+  let correctCount = 0
+  let wrongCount = 0
+  let skippedCount = 0
+  questions.forEach((q, i) => {
+    const ans = result.answers ? result.answers[i] : undefined
+    if (ans === undefined || ans === null) {
+      skippedCount++
+    } else if (q.isCorrect !== undefined ? q.isCorrect : (ans === q.correct)) {
+      correctCount++
+    } else {
+      wrongCount++
+    }
+  })
+
+  const hasSolutionPdf = Boolean(quiz.solution_pdf || quiz.solution_pdf_name || result.solution_pdf || result.solution_pdf_name)
+
   // Total time spent
   const totalTimeSpent = result.totalTimeSpent || questions.reduce((acc, q) => acc + (q.timeSpent || 0), 0)
-  const avgTimePerQ = totalQuestions > 0 ? (totalTimeSpent / totalQuestions).toFixed(1) : 0
+  const avgTimePerQ = totalQuestions > 0 ? Math.round(totalTimeSpent / totalQuestions) : 0
 
   // Sections
   const sections = [...new Set(questions.map(q => q.section || 'General'))]
@@ -55,12 +74,21 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
       <Lightbox src={lightbox} onClose={() => setLightbox(null)} />
 
       {/* Top Header */}
-      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18 }}>
+      <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:18, flexWrap:'wrap', gap:10 }}>
         <div>
           <h2 style={{ fontSize:22, fontWeight:800, margin:'0 0 4px', color:'#111827' }}>Quiz Results & Analytics</h2>
           <p style={{ color:'#6b7280', fontSize:13, margin:0 }}>{quiz.title}</p>
         </div>
-        <div style={{ display:'flex', gap:8 }}>
+        <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+          {hasSolutionPdf && (
+            <button
+              className="btn-sec"
+              style={{ fontSize:12, padding:'6px 14px', color:'#059669', borderColor:'#86efac', background:'#ecfdf5', fontWeight:800 }}
+              onClick={() => viewSolutionPdf(quiz.id || result.quiz_id)}
+            >
+              📄 View Solution PDF
+            </button>
+          )}
           <button className="btn-sec" style={{ fontSize:12, padding:'6px 12px' }} onClick={onBack}>← Back</button>
           <button className="btn-pri" style={{ fontSize:12, padding:'6px 12px' }} onClick={onHome}>Home</button>
         </div>
@@ -69,17 +97,32 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
       {/* Score hero */}
       <div style={{ textAlign:'center', padding:'2rem', background:sbg, borderRadius:20, marginBottom:22, border:`1.5px solid ${sc}35`, boxShadow:'0 4px 20px rgba(0,0,0,0.03)' }}>
         <div style={{ fontSize:64, fontWeight:900, color:sc, lineHeight:1 }}>{pct}%</div>
-        <div style={{ fontSize:18, color:sc, fontWeight:800, marginTop:8 }}>
-          {score} / {totalQuestions} Correct
+        <div style={{ fontSize:20, color:sc, fontWeight:800, marginTop:8 }}>
+          {score} / {totalMarks} Marks
         </div>
-        <div style={{ fontSize:14, color:sc, opacity:0.85, marginTop:4, fontWeight:600 }}>
+        <div style={{ fontSize:13, color:'#4b5563', fontWeight:700, marginTop:6, display:'flex', justifyContent:'center', gap:12, flexWrap:'wrap' }}>
+          <span style={{ color:'#059669' }}>✓ {correctCount} Correct</span>
+          <span style={{ color:'#dc2626' }}>✗ {wrongCount} Incorrect</span>
+          <span style={{ color:'#6b7280' }}>— {skippedCount} Skipped</span>
+        </div>
+        <div style={{ fontSize:14, color:sc, opacity:0.85, marginTop:6, fontWeight:600 }}>
           {pct >= 70 ? '🎉 Excellent performance!' : pct >= 40 ? '👍 Good attempt! Review areas for improvement below.' : '📚 Needs practice. Check question explanations.'}
         </div>
-        {result.auto && (
-          <div style={{ marginTop:10, display:'inline-block', padding:'4px 12px', background:'#fef3c7', color:'#92400e', borderRadius:20, fontSize:12, fontWeight:700 }}>
-            ⏰ Auto-submitted on timer expiry
-          </div>
-        )}
+        <div style={{ display:'flex', justifyContent:'center', gap:8, marginTop:12, flexWrap:'wrap' }}>
+          {result.auto && (
+            <div style={{ padding:'4px 12px', background:'#fef3c7', color:'#92400e', borderRadius:20, fontSize:12, fontWeight:700 }}>
+              ⏰ Auto-submitted on timer expiry
+            </div>
+          )}
+          {hasSolutionPdf && (
+            <button
+              onClick={() => viewSolutionPdf(quiz.id || result.quiz_id)}
+              style={{ padding:'6px 16px', background:'#059669', color:'#fff', border:'none', borderRadius:20, fontSize:12, fontWeight:800, cursor:'pointer', display:'flex', alignItems:'center', gap:6, boxShadow:'0 2px 8px rgba(5,150,105,0.25)' }}
+            >
+              📄 View Solution PDF
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Navigation Tabs */}
@@ -132,12 +175,12 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
             </div>
             <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, padding:'14px', textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize:11, color:'#6b7280', fontWeight:700, textTransform:'uppercase', letterSpacing:'.04em' }}>Total Time</div>
-              <div style={{ fontSize:26, fontWeight:900, color:'#6366f1', marginTop:3 }}>{formatTime(totalTimeSpent)}</div>
-              <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>{totalTimeSpent}s elapsed</div>
+              <div style={{ fontSize:20, fontWeight:900, color:'#6366f1', marginTop:3 }}>{formatDuration(totalTimeSpent)}</div>
+              <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>total elapsed</div>
             </div>
             <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, padding:'14px', textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.02)' }}>
               <div style={{ fontSize:11, color:'#6b7280', fontWeight:700, textTransform:'uppercase', letterSpacing:'.04em' }}>Avg Time / Q</div>
-              <div style={{ fontSize:26, fontWeight:900, color:'#0891b2', marginTop:3 }}>{avgTimePerQ}s</div>
+              <div style={{ fontSize:20, fontWeight:900, color:'#0891b2', marginTop:3 }}>{formatDuration(avgTimePerQ)}</div>
               <div style={{ fontSize:11, color:'#9ca3af', marginTop:2 }}>per question</div>
             </div>
             <div style={{ background:'#fff', border:'1px solid #e5e7eb', borderRadius:14, padding:'14px', textAlign:'center', boxShadow:'0 2px 8px rgba(0,0,0,0.02)' }}>
@@ -177,7 +220,7 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
                           {sec.correct} / {sec.total}
                         </td>
                         <td style={{ padding:'10px 12px', textAlign:'center', color:'#6366f1', fontWeight:700 }}>
-                          ⏱️ {formatTime(sec.timeSpent || 0)}
+                          ⏱️ {formatDuration(sec.timeSpent || 0)}
                         </td>
                         <td style={{ padding:'10px 12px', textAlign:'right' }}>
                           <span style={{ padding:'3px 10px', borderRadius:20, background:accBg, color:accColor, fontWeight:800, fontSize:12 }}>
@@ -212,8 +255,8 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
                     <div style={{ flex:1, height:6, background:'#e5e7eb', borderRadius:3, overflow:'hidden' }}>
                       <div style={{ width:`${pctOfTotal}%`, height:'100%', background:'#6366f1', borderRadius:3 }} />
                     </div>
-                    <span style={{ fontSize:12, fontWeight:700, color:'#374151', minWidth:48, textAlign:'right' }}>
-                      {qTime}s
+                    <span style={{ fontSize:12, fontWeight:700, color:'#374151', minWidth:60, textAlign:'right' }}>
+                      {formatDuration(qTime)}
                     </span>
                   </div>
                 )
@@ -255,20 +298,30 @@ export default function Results({ quiz, result, onBack, onHome, leaderboard = []
                     const right = q.isCorrect !== undefined ? q.isCorrect : (ch === q.correct)
                     const isExp = expanded === i
                     const qTime = q.timeSpent || (result.questionTimes ? result.questionTimes[i] : 0) || 0
+                    const pos = q.positive_marks ?? q.marks ?? 4
+                    const neg = q.negative_marks ?? 0
 
                     return (
                       <div key={i} style={{ background:'#fff', border:`1.5px solid ${right?'#34d399':ch!==undefined?'#fca5a5':'#e5e7eb'}`, borderRadius:14, overflow:'hidden', boxShadow:'0 2px 8px rgba(0,0,0,0.02)' }}>
                         <div style={{ padding:'1.1rem 1.2rem' }}>
-                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:9 }}>
-                            <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                          <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:9, flexWrap:'wrap', gap:8 }}>
+                            <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
                               <span style={{ fontSize:12, fontWeight:800, color:'#6b7280' }}>Question {i+1}</span>
                               <span style={{ fontSize:11, padding:'2px 8px', borderRadius:20, background:'#eff6ff', color:'#2563eb', fontWeight:700 }}>
-                                ⏱️ {qTime}s spent
+                                ⏱️ {formatDuration(qTime)} spent
+                              </span>
+                              <span style={{ fontSize:11, padding:'2px 8px', borderRadius:6, background:'#f8fafc', color:'#475569', border:'1px solid #cbd5e1', fontWeight:700 }}>
+                                +{pos} / -{neg}
                               </span>
                             </div>
-                            <span style={{ fontSize:12, fontWeight:700, padding:'2px 9px', borderRadius:20, background:right?'#d1fae5':ch!==undefined?'#fee2e2':'#f3f4f6', color:right?'#065f46':ch!==undefined?'#991b1b':'#6b7280' }}>
-                              {right ? '✓ Correct' : ch !== undefined ? '✗ Wrong' : '— Skipped'}
-                            </span>
+                            <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                              <span style={{ fontSize:11, fontWeight:800, padding:'2px 8px', borderRadius:6, background:right?'#d1fae5':ch!==undefined?'#fee2e2':'#f3f4f6', color:right?'#065f46':ch!==undefined?'#dc2626':'#6b7280' }}>
+                                {right ? `+${pos} marks` : ch !== undefined ? `-${neg} marks` : '0 marks (unattempted)'}
+                              </span>
+                              <span style={{ fontSize:12, fontWeight:700, padding:'2px 9px', borderRadius:20, background:right?'#d1fae5':ch!==undefined?'#fee2e2':'#f3f4f6', color:right?'#065f46':ch!==undefined?'#991b1b':'#6b7280' }}>
+                                {right ? '✓ Correct' : ch !== undefined ? '✗ Wrong' : '— Skipped'}
+                              </span>
+                            </div>
                           </div>
 
                           {(q.qImage || q.question_image) && (

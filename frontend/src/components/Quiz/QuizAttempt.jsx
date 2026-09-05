@@ -55,9 +55,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
       setTotalSpent(s => s + 1)
 
       setQTime(v => {
+        if (curRef.current >= questions.length - 1) {
+          // On last question: timer counts down without looping and NEVER submits the quiz
+          return Math.max(0, v - 1)
+        }
         if (v <= 1) {
           setCur(c => {
-            if (c + 1 >= questions.length) {  return c }
+            if (c + 1 >= questions.length) { return c }
             return c + 1
           })
           return perQ
@@ -137,12 +141,20 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         <div className="qa-main">
 
           {/* Q header row */}
-          <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:8 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:8, marginBottom:8, flexWrap:'wrap' }}>
             <span style={{ fontSize:12,fontWeight:800,color:'#6366f1',letterSpacing:'.05em',textTransform:'uppercase' }}>
               {q.section} · Q{cur+1}/{questions.length}
             </span>
+            <div style={{ display:'flex', gap:5, alignItems:'center' }}>
+              <span style={{ fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:5, background:'#ecfdf5', color:'#065f46', border:'1px solid #a7f3d0' }}>
+                +{q.positive_marks !== undefined ? q.positive_marks : (q.marks !== undefined ? q.marks : 4)} marks
+              </span>
+              <span style={{ fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:5, background: (q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#fef2f2' : '#f3f4f6', color: (q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#b91c1c' : '#6b7280', border: `1px solid ${(q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#fca5a5' : '#e5e7eb'}` }}>
+                {(q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? `-${q.negative_marks} negative` : 'No negative marking'}
+              </span>
+            </div>
             {isMrk && <span className="tag tag-yellow">🔖 Marked</span>}
-            <div style={{ flex:1, height:3, background:'#f3f4f6', borderRadius:2, overflow:'hidden' }}>
+            <div style={{ flex:1, minWidth:60, height:3, background:'#f3f4f6', borderRadius:2, overflow:'hidden' }}>
               <div className="pbar-fill" style={{ height:'100%', width:`${qPct}%`, background:qPct<25?'#ef4444':qPct<50?'#f59e0b':'#6366f1', borderRadius:2 }} />
             </div>
             <div style={{ position:'relative', flexShrink:0 }}>
@@ -209,7 +221,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
               </div>
               <div style={{ display:'flex', gap:8, marginTop:8 }}>
                 <button className="navarr" onClick={() => setCur(c => Math.max(0,c-1))} disabled={cur===0}>← Prev</button>
-                <button className="navarr" onClick={() => setCur(c => Math.min(questions.length-1,c+1))} disabled={cur===questions.length-1}>Next →</button>
+                {cur === questions.length - 1 ? (
+                  <button className="btn-pri" style={{ flex:1, background:'#dc2626' }} onClick={() => setConfirm(true)}>
+                    Submit Quiz ✓
+                  </button>
+                ) : (
+                  <button className="navarr" onClick={() => setCur(c => Math.min(questions.length-1,c+1))}>Next →</button>
+                )}
               </div>
             </div>
 

@@ -103,11 +103,14 @@ class Quiz(Base):
     creator_id     : Mapped[str]        = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status         : Mapped[QuizStatus] = mapped_column( String(20), default=QuizStatus.draft.value, nullable=False)
     time_per_q_sec : Mapped[int]        = mapped_column(Integer, default=300, nullable=False)  # seconds
-    total_marks    : Mapped[int]        = mapped_column(Integer, default=0, nullable=False)     # auto-computed
+    total_marks    : Mapped[float]      = mapped_column(Float, default=0.0, nullable=False)     # auto-computed
     is_public      : Mapped[bool]       = mapped_column(Boolean, default=False, nullable=False)
     tags           : Mapped[list|None]  = mapped_column(JSON, nullable=True)     # ["math","algebra"]
     subject        : Mapped[str|None]   = mapped_column(String(255), nullable=True)
     difficulty     : Mapped[str|None]   = mapped_column(String(50), nullable=True)  # easy/medium/hard
+    instructions   : Mapped[str|None]   = mapped_column(Text, nullable=True)
+    solution_pdf   : Mapped[str|None]   = mapped_column(Text, nullable=True)     # base64 data URL or path
+    solution_pdf_name: Mapped[str|None] = mapped_column(String(255), nullable=True) # original filename
     created_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -138,7 +141,9 @@ class Question(Base):
     correct_answer : Mapped[int|None]     = mapped_column(Integer, nullable=True)       # 0-based index; None = AI resolves
     explanation    : Mapped[str|None]     = mapped_column(Text, nullable=True)
     explanation_image: Mapped[str|None]   = mapped_column(Text, nullable=True)
-    marks          : Mapped[int]          = mapped_column(Integer, default=1, nullable=False)
+    marks          : Mapped[float]        = mapped_column(Float, default=1.0, nullable=False)
+    positive_marks : Mapped[float]        = mapped_column(Float, default=1.0, nullable=False)
+    negative_marks : Mapped[float]        = mapped_column(Float, default=0.0, nullable=False)
     diagram        : Mapped[str|None]     = mapped_column(Text, nullable=True)   # attached diagram path OR base64 data URL
     created_at     : Mapped[datetime]     = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     : Mapped[datetime]     = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -212,8 +217,8 @@ class Attempt(Base):
     id             : Mapped[str]           = mapped_column(String(36), primary_key=True, default=new_uuid)
     session_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("quiz_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     student_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
-    score          : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
-    total_marks    : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    score          : Mapped[float]         = mapped_column(Float, default=0.0, nullable=False)
+    total_marks    : Mapped[float]         = mapped_column(Float, default=0.0, nullable=False)
     status         : Mapped[AttemptStatus] = mapped_column(String(20), default=AttemptStatus.in_progress.value)
     started_at     : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     submitted_at   : Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
@@ -244,7 +249,7 @@ class Answer(Base):
     question_id     : Mapped[str]      = mapped_column(String(36), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
     selected_option : Mapped[int|None] = mapped_column(Integer, nullable=True)    # None = skipped
     is_correct      : Mapped[bool]     = mapped_column(Boolean, default=False, nullable=False)
-    marks_awarded   : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)
+    marks_awarded   : Mapped[float]    = mapped_column(Float, default=0.0, nullable=False)
     time_taken_sec  : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)
     answered_at     : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -271,8 +276,8 @@ class LeaderboardEntry(Base):
     session_id  : Mapped[str]      = mapped_column(String(36), ForeignKey("quiz_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
     student_id  : Mapped[str]      = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     student_name: Mapped[str]      = mapped_column(String(255), nullable=False)
-    score       : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)
-    total_marks : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)
+    score       : Mapped[float]    = mapped_column(Float, default=0.0, nullable=False)
+    total_marks : Mapped[float]    = mapped_column(Float, default=0.0, nullable=False)
     accuracy    : Mapped[float]    = mapped_column(Float, default=0.0, nullable=False)  # 0.0–1.0
     rank        : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)
     time_taken_sec: Mapped[int]    = mapped_column(Integer, default=0, nullable=False)

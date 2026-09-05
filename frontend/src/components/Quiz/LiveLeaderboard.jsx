@@ -1,3 +1,5 @@
+import { formatDuration } from '../../services/utils.js'
+
 /**
  * LiveLeaderboard — real-time leaderboard shown after quiz ends
  * or during quiz (admin view).
@@ -45,13 +47,13 @@ export default function LiveLeaderboard({ entries = [], title = 'Leaderboard', c
                     {entry.student_name}{isMe && <span style={{ fontSize:11, marginLeft:6, opacity:.6 }}>(you)</span>}
                   </div>
                   <div style={{ fontSize:12, color:'#9ca3af' }}>
-                    {Math.round((entry.accuracy || 0) * 100)}% accuracy · {entry.time_taken_sec}s
+                    {Math.round((entry.accuracy || 0) * 100)}% accuracy · {formatDuration(entry.time_taken_sec || 0)}
                   </div>
                 </div>
                 {/* Score */}
                 <div style={{ textAlign:'right', flexShrink:0 }}>
                   <div style={{ fontSize:18, fontWeight:900, color:barColor }}>{pct}%</div>
-                  <div style={{ fontSize:11, color:'#9ca3af' }}>{entry.score}/{entry.total_marks}</div>
+                  <div style={{ fontSize:11, color:'#9ca3af' }}>{entry.score} / {entry.total_marks} pts</div>
                 </div>
               </div>
 

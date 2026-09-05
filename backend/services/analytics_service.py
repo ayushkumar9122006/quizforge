@@ -14,19 +14,19 @@ from typing import Any
 
 # ── Session analytics ─────────────────────────────────────────────────────────
 
-async def get_session_analytics(db: AsyncSession, session_id: str) -> dict[str, Any]:
+async def get_session_analytics(db: AsyncSession, session_id: str, student_id: str | None = None) -> dict[str, Any]:
     """Full analytics for one quiz session, including per-student and per-section breakdowns."""
     from models.all_models import User
     from sqlalchemy.orm import selectinload
 
-    attempts_q = await db.execute(
-        select(Attempt)
-        .options(selectinload(Attempt.student), selectinload(Attempt.answers))
-        .where(
-            Attempt.session_id == session_id,
-            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted])
-        )
+    query = select(Attempt).options(selectinload(Attempt.student), selectinload(Attempt.answers)).where(
+        Attempt.session_id == session_id,
+        Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted])
     )
+    if student_id:
+        query = query.where(Attempt.student_id == student_id)
+
+    attempts_q = await db.execute(query)
     attempts = list(attempts_q.scalars().all())
     total_submitted = len(attempts)
 
@@ -212,7 +212,7 @@ async def get_session_analytics(db: AsyncSession, session_id: str) -> dict[str, 
 
 # ── Quiz-level analytics (across ALL sessions) ────────────────────────────────
 
-async def get_quiz_analytics(db: AsyncSession, quiz_id: str) -> dict[str, Any]:
+async def get_quiz_analytics(db: AsyncSession, quiz_id: str, student_id: str | None = None) -> dict[str, Any]:
     """Aggregate analytics for a quiz across all its sessions."""
     from models.all_models import User
     from sqlalchemy.orm import selectinload
@@ -234,15 +234,15 @@ async def get_quiz_analytics(db: AsyncSession, quiz_id: str) -> dict[str, Any]:
     )
     questions_map = {q.id: q for q in q_res.scalars().all()}
 
-    # All submitted attempts across all sessions
-    att_q = await db.execute(
-        select(Attempt)
-        .options(selectinload(Attempt.student), selectinload(Attempt.answers))
-        .where(
-            Attempt.session_id.in_(session_ids),
-            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted])
-        )
+    # All submitted attempts across all sessions (or filtered to student)
+    query = select(Attempt).options(selectinload(Attempt.student), selectinload(Attempt.answers)).where(
+        Attempt.session_id.in_(session_ids),
+        Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted])
     )
+    if student_id:
+        query = query.where(Attempt.student_id == student_id)
+
+    att_q = await db.execute(query)
     attempts       = list(att_q.scalars().all())
     total_attempts = len(attempts)
 

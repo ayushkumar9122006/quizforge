@@ -7,65 +7,14 @@ import { useRef, useState, useEffect, useCallback } from 'react'
  *   src        — image data URL to crop from
  *   onCrop     — callback(croppedDataUrl) when user confirms
  *   onCancel   — callback() when user cancels
- *   label      — optional instruction text shown at top
+ *   label      — optional instruction text
  */
 export default function ImageCropperWithMagnifier({ src, onCrop, onCancel, label }) {
   const containerRef = useRef()
   const imgRef       = useRef()
-  const canvasRef    = useRef()           // offscreen canvas for magnifier
   const [rect,    setRect]    = useState(null)   // {x,y,w,h} in px
   const [drawing, setDrawing] = useState(false)
-  const [mouse,   setMouse]   = useState(null)   // {x,y} for magnifier position
-  const [showMag, setShowMag] = useState(false)
   const startRef = useRef(null)
-  const MAGNIFIER_R  = 60    // radius of magnifier circle (px)
-  const MAGNIFIER_Z  = 2.5   // zoom level
-
-  // Draw magnifier on canvas whenever mouse moves inside image
-  useEffect(() => {
-    if (!showMag || !mouse || !imgRef.current || !canvasRef.current) return
-    const img = imgRef.current
-    const cv  = canvasRef.current
-    const ctx = cv.getContext('2d')
-    const br  = img.getBoundingClientRect()
-
-    // Natural image coords under cursor
-    const scaleX = img.naturalWidth  / br.width
-    const scaleY = img.naturalHeight / br.height
-    const nx = mouse.x * scaleX
-    const ny = mouse.y * scaleY
-
-    const d  = MAGNIFIER_R * 2
-    cv.width  = d
-    cv.height = d
-
-    // Clip to circle
-    ctx.clearRect(0, 0, d, d)
-    ctx.save()
-    ctx.beginPath()
-    ctx.arc(MAGNIFIER_R, MAGNIFIER_R, MAGNIFIER_R, 0, Math.PI * 2)
-    ctx.clip()
-
-    // Draw zoomed portion
-    const sw = (MAGNIFIER_R * 2) / MAGNIFIER_Z   // source width in natural px
-    const sh = sw
-    ctx.drawImage(img, nx - sw/2, ny - sh/2, sw, sh, 0, 0, d, d)
-
-    // Border
-    ctx.restore()
-    ctx.beginPath()
-    ctx.arc(MAGNIFIER_R, MAGNIFIER_R, MAGNIFIER_R - 1, 0, Math.PI * 2)
-    ctx.strokeStyle = '#6366f1'
-    ctx.lineWidth   = 2.5
-    ctx.stroke()
-
-    // Crosshair
-    ctx.strokeStyle = 'rgba(99,102,241,0.6)'
-    ctx.lineWidth   = 1
-    ctx.beginPath(); ctx.moveTo(MAGNIFIER_R, 4); ctx.lineTo(MAGNIFIER_R, d-4); ctx.stroke()
-    ctx.beginPath(); ctx.moveTo(4, MAGNIFIER_R); ctx.lineTo(d-4, MAGNIFIER_R); ctx.stroke()
-
-  }, [mouse, showMag])
 
   const getPos = (e, el) => {
     const br = el.getBoundingClientRect()
@@ -83,16 +32,12 @@ export default function ImageCropperWithMagnifier({ src, onCrop, onCancel, label
     startRef.current = p
     setRect({ x: p.x, y: p.y, w: 0, h: 0 })
     setDrawing(true)
-    setMouse(p)
-    setShowMag(true)
   }
 
   const onMove = e => {
     e.preventDefault()
-    const p = getPos(e, imgRef.current)
-    setMouse(p)
-    setShowMag(true)
     if (!drawing || !startRef.current) return
+    const p = getPos(e, imgRef.current)
     const s = startRef.current
     setRect({
       x: Math.min(s.x, p.x),
@@ -104,10 +49,11 @@ export default function ImageCropperWithMagnifier({ src, onCrop, onCancel, label
 
   const onUp = () => {
     setDrawing(false)
-    setShowMag(false)
   }
 
-  const onLeave = () => setShowMag(false)
+  const onLeave = () => {
+    setDrawing(false)
+  }
 
   const doCrop = useCallback(async () => {
     if (!rect || rect.w < 8 || rect.h < 8) { alert('Draw a larger crop area.'); return }
@@ -137,8 +83,6 @@ export default function ImageCropperWithMagnifier({ src, onCrop, onCancel, label
     onCrop(cropped)
   }, [rect, src, onCrop])
 
-  const D = MAGNIFIER_R * 2   // magnifier diameter
-
   return (
     <div style={{ display:'flex', flexDirection:'column', height:'100%' }}>
       {/* Instruction */}
@@ -146,30 +90,11 @@ export default function ImageCropperWithMagnifier({ src, onCrop, onCancel, label
         {label || 'Draw a crop box — click and drag on the image'}
       </div>
 
-      {/* Image + magnifier */}
+      {/* Image container */}
       <div ref={containerRef}
         style={{ flex:1, overflow:'auto', padding:'10px', background:'#f9fafb', display:'flex', alignItems:'center', justifyContent:'center', position:'relative' }}>
 
-        {/* Magnifier lens — follows cursor */}
-        {showMag && mouse && (
-          <canvas ref={canvasRef}
-            style={{
-              position:      'absolute',
-              left:          (mouse.x + 10 + (MAGNIFIER_R * 2) > (containerRef.current?.clientWidth || 999)
-                               ? mouse.x - D - 10 : mouse.x + 10) + 'px',
-              top:           Math.max(0, mouse.y - MAGNIFIER_R) + 'px',
-              width:         D + 'px',
-              height:        D + 'px',
-              borderRadius:  '50%',
-              boxShadow:     '0 4px 20px rgba(0,0,0,0.25)',
-              pointerEvents: 'none',
-              zIndex:        20,
-              background:    '#fff',
-            }}
-          />
-        )}
-
-        {/* The image itself */}
+        {/* The image itself with crosshair */}
         <div style={{ position:'relative', lineHeight:0, userSelect:'none', cursor:'crosshair' }}
           onMouseDown={onDown} onMouseMove={onMove} onMouseUp={onUp} onMouseLeave={onLeave}
           onTouchStart={onDown} onTouchMove={onMove} onTouchEnd={onUp}>

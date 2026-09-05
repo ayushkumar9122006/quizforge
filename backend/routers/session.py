@@ -7,16 +7,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from database.config import get_db
 from schemas.session import (
     SessionCreate, SessionOut, JoinSessionRequest,
-    AttemptSubmit, AttemptResultOut, AnswerResultOut, LeaderboardEntryOut
+    AttemptSubmit, AttemptResultOut, AnswerResultOut, LeaderboardEntryOut,
+    StudentAttemptHistoryItemOut
 )
 from crud.session import (
     create_session, get_session_by_code, get_session_by_id,
     start_session, end_session, get_or_create_attempt, get_attempt,
-    submit_attempt, get_leaderboard
+    submit_attempt, get_leaderboard, get_student_attempts
 )
 from crud.quiz import get_quiz
 from utils.dependencies import require_admin, get_current_user
-from models.all_models import User, SessionStatus
+from models.all_models import User, SessionStatus, UserRole
 from services.llm_service import resolve_unset_answers
 from services.analytics_service import get_session_analytics
 from websocket.manager import manager
@@ -158,6 +159,24 @@ async def submit(
     )
 
 
+@router.get("/attempts/my", response_model=List[StudentAttemptHistoryItemOut])
+async def my_attempts(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Return all completed attempts belonging to the authenticated student."""
+    return await get_student_attempts(db, user.id)
+
+
+@router.get("/my-attempts", response_model=List[StudentAttemptHistoryItemOut])
+async def my_attempts_alias(
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """Alias for /attempts/my."""
+    return await get_student_attempts(db, user.id)
+
+
 @router.get("/{session_id}/leaderboard", response_model=List[LeaderboardEntryOut])
 async def leaderboard(
     session_id: str,
@@ -171,9 +190,10 @@ async def leaderboard(
 async def analytics(
     session_id: str,
     db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
+    user: User = Depends(get_current_user),
 ):
-    return await get_session_analytics(db, session_id)
+    student_id = user.id if user.role == UserRole.student else None
+    return await get_session_analytics(db, session_id, student_id=student_id)
 
 
 @router.post("/{session_id}/end", response_model=SessionOut)

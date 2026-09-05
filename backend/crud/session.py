@@ -140,19 +140,27 @@ async def submit_attempt(
     # Build question lookup
     q_map = {q.id: q for q in questions}
 
-    score = 0
-    total_marks = sum(q.marks for q in questions)
+    score = 0.0
+    total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
     answer_results: list[dict] = []
 
     for ans_data in submission.answers:
         q = q_map.get(ans_data.question_id)
         if not q:
             continue
-        is_correct = (
-            ans_data.selected_option is not None
-            and ans_data.selected_option == q.correct_answer
-        )
-        marks_awarded = q.marks if is_correct else 0
+        pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
+        neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+
+        if ans_data.selected_option is None:
+            is_correct = False
+            marks_awarded = 0.0
+        elif ans_data.selected_option == q.correct_answer:
+            is_correct = True
+            marks_awarded = pos
+        else:
+            is_correct = False
+            marks_awarded = -neg
+
         score += marks_awarded
 
         answer = Answer(
@@ -181,7 +189,7 @@ async def submit_attempt(
     await db.flush()
 
     # Update leaderboard
-    accuracy = score / total_marks if total_marks > 0 else 0.0
+    accuracy = max(0.0, score / total_marks) if total_marks > 0 else 0.0
     existing_lb = await db.execute(
         select(LeaderboardEntry).where(
             LeaderboardEntry.session_id == attempt.session_id,
@@ -219,6 +227,127 @@ async def submit_attempt(
     # Recompute all ranks for this session
     await _recompute_ranks(db, attempt.session_id)
     return attempt, answer_results
+
+
+async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
+    """
+    Returns only completed/submitted attempts belonging strictly to student_id.
+    """
+    from models.all_models import Quiz, Question, Option, QuizSession
+    result = await db.execute(
+        select(Attempt)
+        .options(
+            selectinload(Attempt.session)
+            .selectinload(QuizSession.quiz)
+            .selectinload(Quiz.questions)
+            .selectinload(Question.options),
+            selectinload(Attempt.answers),
+        )
+        .where(
+            Attempt.student_id == student_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+        .order_by(Attempt.submitted_at.desc())
+    )
+    attempts = list(result.scalars().all())
+    items = []
+    for att in attempts:
+        quiz = att.session.quiz if att.session else None
+        if not quiz:
+            continue
+        questions = quiz.questions or []
+        q_map = {q.id: q for q in questions}
+
+        answers_dict = {}
+        question_times_dict = {}
+        for ans in (att.answers or []):
+            q = q_map.get(ans.question_id)
+            if q:
+                idx = q.order_index
+                answers_dict[idx] = ans.selected_option
+                question_times_dict[idx] = ans.time_taken_sec
+
+        sections = sorted(list(set(q.section or "General" for q in questions)))
+        sec_breakdown = []
+        for sec in sections:
+            sec_qs = [q for q in questions if (q.section or "General") == sec]
+            sec_ans = [a for a in (att.answers or []) if q_map.get(a.question_id) and (q_map[a.question_id].section or "General") == sec]
+            sec_correct = sum(1 for a in sec_ans if a.is_correct)
+            sec_time = sum(a.time_taken_sec or 0 for a in sec_ans)
+            sec_score = sum(a.marks_awarded or 0.0 for a in sec_ans)
+            sec_total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in sec_qs)
+            sec_breakdown.append({
+                "name": sec,
+                "section": sec,
+                "total": len(sec_qs),
+                "correct": sec_correct,
+                "score": sec_score,
+                "totalMarks": sec_total_marks,
+                "timeSpent": sec_time,
+                "accuracyPct": round((sec_correct / len(sec_qs)) * 100) if sec_qs else 0,
+            })
+
+        resolved_questions = []
+        for q in questions:
+            user_ans_obj = next((a for a in (att.answers or []) if a.question_id == q.id), None)
+            pos_m = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
+            neg_m = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+            resolved_questions.append({
+                "id": q.id,
+                "text": q.text,
+                "qImage": q.question_image,
+                "section": q.section,
+                "correct": q.correct_answer,
+                "correct_answer": q.correct_answer,
+                "explanation": q.explanation,
+                "marks": pos_m,
+                "positive_marks": pos_m,
+                "negative_marks": neg_m,
+                "diagram": q.diagram,
+                "isCorrect": user_ans_obj.is_correct if user_ans_obj else False,
+                "userAnswer": user_ans_obj.selected_option if user_ans_obj else None,
+                "marksAwarded": user_ans_obj.marks_awarded if user_ans_obj else 0.0,
+                "timeSpent": user_ans_obj.time_taken_sec if user_ans_obj else 0,
+                "options": [
+                    {"type": "image", "src": opt.image} if opt.content_type == "image" else opt.text
+                    for opt in sorted(q.options or [], key=lambda o: o.order_index)
+                ],
+            })
+
+        tot_m = float(att.total_marks or sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions) or 1.0)
+        pct = round((float(att.score) / tot_m) * 100, 1) if tot_m > 0 else 0.0
+
+        items.append({
+            "id": att.id,
+            "session_id": att.session_id,
+            "student_id": att.student_id,
+            "quiz_id": quiz.id,
+            "quiz_title": quiz.title,
+            "quizTitle": quiz.title,
+            "score": float(att.score),
+            "total_marks": tot_m,
+            "totalMarks": tot_m,
+            "totalQ": len(questions),
+            "percentage": pct,
+            "status": att.status,
+            "auto": att.status == AttemptStatus.auto_submitted,
+            "started_at": att.started_at,
+            "submitted_at": att.submitted_at,
+            "date": att.submitted_at.isoformat() if att.submitted_at else att.started_at.isoformat(),
+            "time_taken_sec": att.time_taken_sec,
+            "totalTimeSpent": att.time_taken_sec,
+            "rank": att.rank,
+            "has_solution_pdf": bool(quiz.solution_pdf),
+            "solution_pdf": quiz.solution_pdf,
+            "solution_pdf_name": quiz.solution_pdf_name,
+            "questions": resolved_questions,
+            "answers": answers_dict,
+            "section_breakdown": sec_breakdown,
+            "sectionBreakdown": sec_breakdown,
+            "question_times": question_times_dict,
+            "questionTimes": question_times_dict,
+        })
+    return items
 
 
 async def _recompute_ranks(db: AsyncSession, session_id: str) -> None:

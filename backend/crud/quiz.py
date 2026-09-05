@@ -15,6 +15,9 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
     quiz = Quiz(
         title=data.title,
         description=data.description,
+        instructions=data.instructions,
+        solution_pdf=data.solution_pdf,
+        solution_pdf_name=data.solution_pdf_name,
         creator_id=creator_id,
         time_per_q_sec=data.time_per_q_sec,
         is_public=data.is_public,
@@ -25,8 +28,10 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
     db.add(quiz)
     await db.flush()
 
-    total_marks = 0
+    total_marks = 0.0
     for i, q_data in enumerate(data.questions):
+        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (q_data.marks or 1.0))
+        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else 0.0)
         question = Question(
             quiz_id=quiz.id,
             order_index=i,
@@ -36,12 +41,14 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
             content_type=q_data.content_type,
             correct_answer=q_data.correct_answer,
             explanation=q_data.explanation,
-            marks=q_data.marks,
+            marks=pos_marks,
+            positive_marks=pos_marks,
+            negative_marks=neg_marks,
             diagram=q_data.diagram,
         )
         db.add(question)
         await db.flush()
-        total_marks += q_data.marks
+        total_marks += pos_marks
 
         for j, opt in enumerate(q_data.options):
             option = Option(

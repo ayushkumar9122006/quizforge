@@ -5,6 +5,7 @@
  */
 import { useState, useEffect } from 'react'
 import { getQuizAnalytics, getSessionAnalytics } from '../../../services/analyticsService.js'
+import { formatDuration } from '../../../services/utils.js'
 import StatCard               from './StatCard.jsx'
 import ScoreDistributionChart from './ScoreDistributionChart.jsx'
 import QuestionAccuracyChart  from './QuestionAccuracyChart.jsx'
@@ -123,7 +124,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
             <StatCard icon="📉" label="Lowest"        value={`${Math.round((data.lowest_score/data.total_marks)*100)}%`}
               sub={`${data.lowest_score}/${data.total_marks} marks`}
               color="#dc2626" bg="#fee2e2" />
-            <StatCard icon="⏱"  label="Avg Time"      value={`${Math.round(data.average_time_sec)}s`}
+            <StatCard icon="⏱"  label="Avg Time"      value={formatDuration(Math.round(data.average_time_sec || 0))}
               sub="per submission"
               color="#0891b2" bg="#e0f2fe" />
           </div>
@@ -200,7 +201,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
                         <tr key={i} style={{ borderBottom:'1px solid #f3f4f6' }}>
                           <td style={{ padding:'10px 12px', fontWeight:700, color:'#111827' }}>{sec.section}</td>
                           <td style={{ padding:'10px 12px', textAlign:'center', color:'#4b5563' }}>{sec.total_questions}</td>
-                          <td style={{ padding:'10px 12px', textAlign:'center', color:'#6366f1', fontWeight:700 }}>⏱️ {sec.avg_time_sec || 0}s</td>
+                          <td style={{ padding:'10px 12px', textAlign:'center', color:'#6366f1', fontWeight:700 }}>⏱️ {formatDuration(sec.avg_time_sec || 0)}</td>
                           <td style={{ padding:'10px 12px', textAlign:'right' }}>
                             <span style={{ fontSize:12, padding:'3px 10px', background:bg, color:col, borderRadius:20, fontWeight:800 }}>
                               {sec.accuracy_pct}%
@@ -237,7 +238,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
                           <div>
                             <div style={{ fontWeight:800, fontSize:14, color:'#111827' }}>{st.student_name}</div>
                             <div style={{ fontSize:12, color:'#6b7280', marginTop:2 }}>
-                              ⏱️ Total Time: <strong>{st.time_taken_sec || 0}s</strong>
+                              ⏱️ Total Time: <strong>{formatDuration(st.time_taken_sec || 0)}</strong>
                               {st.submitted_at && ` · ${new Date(st.submitted_at).toLocaleTimeString()}`}
                             </div>
                           </div>
@@ -270,7 +271,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
                                   <div key={si} style={{ background:'#fff', padding:'8px 12px', borderRadius:8, border:'1px solid #e5e7eb', fontSize:12 }}>
                                     <div style={{ fontWeight:700, color:'#111827' }}>{s.section}</div>
                                     <div style={{ color:'#6b7280', marginTop:2 }}>
-                                      Score: <strong>{s.score}/{s.total_marks}</strong> ({s.accuracy_pct}%) · ⏱️ {s.time_taken_sec || 0}s
+                                      Score: <strong>{s.score}/{s.total_marks}</strong> ({s.accuracy_pct}%) · ⏱️ {formatDuration(s.time_taken_sec || 0)}
                                     </div>
                                   </div>
                                 ))}
@@ -295,7 +296,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
                                       {q.is_correct ? '✓ Correct' : q.selected_option !== null ? '✗ Wrong' : '— Skipped'}
                                     </span>
                                     <span style={{ color:'#6366f1', fontWeight:700, minWidth:55, textAlign:'right' }}>
-                                      ⏱️ {q.time_taken_sec || 0}s
+                                      ⏱️ {formatDuration(q.time_taken_sec || 0)}
                                     </span>
                                   </div>
                                 ))}
@@ -343,7 +344,7 @@ export default function AnalyticsDashboard({ quiz, onBack }) {
                         <td style={{ padding:'9px 12px' }}>
                           <span style={{ fontSize:11, padding:'2px 8px', background:'#ede9fe', color:'#6366f1', borderRadius:20, fontWeight:700 }}>{q.section}</span>
                         </td>
-                        <td style={{ padding:'9px 12px', color:'#6366f1', fontWeight:700 }}>⏱️ {q.avg_time_sec || 0}s</td>
+                        <td style={{ padding:'9px 12px', color:'#6366f1', fontWeight:700 }}>⏱️ {formatDuration(q.avg_time_sec || 0)}</td>
                         <td style={{ padding:'9px 12px', color:'#059669', fontWeight:700 }}>{q.correct}</td>
                         <td style={{ padding:'9px 12px', color:'#dc2626', fontWeight:700 }}>{q.wrong}</td>
                         <td style={{ padding:'9px 12px', color:'#d97706', fontWeight:700 }}>{q.skipped}</td>

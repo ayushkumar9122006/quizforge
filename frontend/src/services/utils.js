@@ -6,6 +6,16 @@ export function formatTime(s) {
   return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`
 }
 
+export function formatDuration(seconds) {
+  const s = Math.max(0, Math.round(seconds || 0))
+  const mins = Math.floor(s / 60)
+  const secs = s % 60
+  if (mins === 0) {
+    return `${secs} sec`
+  }
+  return `${mins} min ${secs.toString().padStart(2, '0')} sec`
+}
+
 export function cropImage(imgDataUrl, cropPct) {
   return new Promise(res => {
     const img = new Image()

@@ -86,9 +86,28 @@ function ImageField({ value, onCrop, placeholder, disabled }) {
   )
 }
 
-export default function QuestionEditor({ initQuestions, quizTitle, timePerQ, onSave, onBack, saving, saveError }) {
-  const [questions, setQuestions] = useState(initQuestions)
-  const [cur,       setCur]       = useState(0)
+export default function QuestionEditor({
+  initQuestions,
+  quizTitle,
+  timePerQ,
+  instructions,
+  initSolutionPdf,
+  initSolutionPdfName,
+  onSave,
+  onBack,
+  saving,
+  saveError
+}) {
+  const [questions, setQuestions] = useState(
+    initQuestions.map(q => ({
+      ...q,
+      positive_marks: q.positive_marks !== undefined ? Number(q.positive_marks) : 4,
+      negative_marks: q.negative_marks !== undefined ? Number(q.negative_marks) : 1
+    }))
+  )
+  const [cur,             setCur]             = useState(0)
+  const [solutionPdf,     setSolutionPdf]     = useState(initSolutionPdf || null)
+  const [solutionPdfName, setSolutionPdfName] = useState(initSolutionPdfName || '')
 
   // Full-page image upload panel
   const [showUpload, setShowUpload] = useState(false)
@@ -101,7 +120,7 @@ export default function QuestionEditor({ initQuestions, quizTitle, timePerQ, onS
     target:  null,   // 'question' | 'optionA' | 'optionB' | 'optionC' | 'optionD' | 'diagram'
   })
 
-  const q      = questions[cur]
+  const q      = questions[cur] || {}
   const srcImg = q.questionCropSrc   // the cropped single-question image = source for all sub-crops
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
@@ -363,6 +382,51 @@ export default function QuestionEditor({ initQuestions, quizTitle, timePerQ, onS
             <p style={{ fontSize:11, color:'#9ca3af', marginTop:10, lineHeight:1.6 }}>
               Crop any figure, graph, or diagram from the uploaded question image.
             </p>
+            {/* Marking scheme for this question */}
+            <div style={{ marginTop:16, padding:'12px', background:'#f8fafc', borderRadius:9, border:'1.5px solid #e2e8f0' }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:8 }}>
+                <span style={{ fontSize:12, fontWeight:700, color:'#334155' }}>Question Marking Scheme</span>
+                <span style={{ fontSize:11, fontWeight:800, color:'#6366f1', background:'#ede9fe', padding:'2px 7px', borderRadius:5 }}>
+                  +{q.positive_marks ?? 4} / -{q.negative_marks ?? 1}
+                </span>
+              </div>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:8 }}>
+                <div>
+                  <label style={{ fontSize:11, fontWeight:700, color:'#059669', display:'block', marginBottom:3 }}>+ Correct</label>
+                  <input
+                    type="number" step="0.25" min={0} className="inp"
+                    value={q.positive_marks ?? 4}
+                    onChange={e => upQ('positive_marks', Math.max(0, +e.target.value))}
+                    style={{ padding:'5px 8px', fontSize:13 }}
+                  />
+                </div>
+                <div>
+                  <label style={{ fontSize:11, fontWeight:700, color:'#dc2626', display:'block', marginBottom:3 }}>- Negative</label>
+                  <input
+                    type="number" step="0.25" min={0} className="inp"
+                    value={q.negative_marks ?? 1}
+                    onChange={e => upQ('negative_marks', Math.max(0, +e.target.value))}
+                    style={{ padding:'5px 8px', fontSize:13 }}
+                  />
+                </div>
+              </div>
+              <div style={{ display:'flex', gap:4, flexWrap:'wrap' }}>
+                {[
+                  { label: '+4 / -1', pos: 4, neg: 1 },
+                  { label: '+2 / -0.5', pos: 2, neg: 0.5 },
+                  { label: '+1 / 0', pos: 1, neg: 0 },
+                  { label: '+3 / -1', pos: 3, neg: 1 },
+                ].map((preset, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => { upQ('positive_marks', preset.pos); upQ('negative_marks', preset.neg) }}
+                    style={{ fontSize:10, fontWeight:700, padding:'2px 6px', borderRadius:5, border:'1px solid #cbd5e1', background:'#fff', color:'#475569', cursor:'pointer' }}>
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </div>
       </div>
@@ -380,7 +444,7 @@ export default function QuestionEditor({ initQuestions, quizTitle, timePerQ, onS
         {cur < questions.length - 1
           ? <button className="navarr" onClick={() => setCur(c => c + 1)}>Next →</button>
           : <button className="btn-pri" style={{ flex:1 }} disabled={!allValid || saving}
-              onClick={() => allValid && !saving && onSave(questions)}>
+              onClick={() => allValid && !saving && onSave(questions, solutionPdf, solutionPdfName)}>
               {saving ? 'Saving…' : 'Save & Publish ✓'}
             </button>
         }
@@ -390,7 +454,7 @@ export default function QuestionEditor({ initQuestions, quizTitle, timePerQ, onS
       {cur < questions.length - 1 && (
         <button className="btn-pri" style={{ width:'100%', opacity: allValid && !saving ? 1 : .4 }}
           disabled={!allValid || saving}
-          onClick={() => allValid && !saving && onSave(questions)}>
+          onClick={() => allValid && !saving && onSave(questions, solutionPdf, solutionPdfName)}>
           {saving ? 'Saving…' : 'Save & Publish Quiz ✓'}
         </button>
       )}
