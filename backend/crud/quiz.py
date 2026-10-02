@@ -18,6 +18,8 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
         instructions=data.instructions,
         solution_pdf=data.solution_pdf,
         solution_pdf_name=data.solution_pdf_name,
+        availability_start=data.availability_start,
+        availability_end=data.availability_end,
         creator_id=creator_id,
         time_per_q_sec=data.time_per_q_sec,
         is_public=data.is_public,
@@ -40,6 +42,9 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
             question_image=q_data.question_image,
             content_type=q_data.content_type,
             correct_answer=q_data.correct_answer,
+            raw_answer=getattr(q_data, "raw_answer", None),
+            question_type=getattr(q_data, "question_type", "single_correct") or "single_correct",
+            match_data=getattr(q_data, "match_data", None),
             explanation=q_data.explanation,
             marks=pos_marks,
             positive_marks=pos_marks,
@@ -120,3 +125,56 @@ async def publish_quiz(db: AsyncSession, quiz_id: str) -> Optional[Quiz]:
     quiz.status = QuizStatus.published.value
     await db.flush()
     return quiz
+
+
+async def add_questions_to_quiz(db: AsyncSession, quiz_id: str, new_questions: List) -> Optional[Quiz]:
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        return None
+
+    current_count = len(quiz.questions)
+    total_marks_added = 0.0
+
+    for i, q_data in enumerate(new_questions):
+        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (q_data.marks or 1.0))
+        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else 0.0)
+        exp = q_data.explanation
+        if not exp and getattr(q_data, "source_page", None):
+            exp = f"PDF Page {q_data.source_page}"
+
+        question = Question(
+            quiz_id=quiz.id,
+            order_index=current_count + i,
+            section=q_data.section or "General",
+            text=q_data.text or "",
+            question_image=q_data.question_image,
+            content_type=getattr(q_data, "content_type", None) or ContentType.text,
+            correct_answer=q_data.correct_answer,
+            raw_answer=getattr(q_data, "raw_answer", None),
+            question_type=getattr(q_data, "question_type", "single_correct") or "single_correct",
+            match_data=getattr(q_data, "match_data", None),
+            explanation=exp,
+            marks=pos_marks,
+            positive_marks=pos_marks,
+            negative_marks=neg_marks,
+            diagram=q_data.diagram,
+        )
+        db.add(question)
+        await db.flush()
+        total_marks_added += pos_marks
+
+        for j, opt in enumerate(q_data.options):
+            option = Option(
+                question_id=question.id,
+                order_index=j,
+                text=opt.text or "",
+                image=opt.image,
+                content_type=getattr(opt, "content_type", None) or ContentType.text,
+            )
+            db.add(option)
+
+    quiz.total_marks = float(quiz.total_marks or 0.0) + total_marks_added
+    await db.flush()
+    db.expire_all()
+    return await get_quiz(db, quiz_id)
+

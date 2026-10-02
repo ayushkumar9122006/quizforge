@@ -143,6 +143,11 @@ async def submit_attempt(
     score = 0.0
     total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
     answer_results: list[dict] = []
+    correct_count = 0
+    incorrect_count = 0
+    skipped_count = 0
+    marked_count = 0
+    attempted_count = 0
 
     for ans_data in submission.answers:
         q = q_map.get(ans_data.question_id)
@@ -151,15 +156,28 @@ async def submit_attempt(
         pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
         neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
 
-        if ans_data.selected_option is None:
+        is_marked = bool(getattr(ans_data, "marked_for_review", False))
+        if is_marked:
+            marked_count += 1
+
+        is_answered = (ans_data.selected_option is not None) or (
+            getattr(ans_data, "response_text", None) is not None and str(ans_data.response_text).strip() != ""
+        )
+
+        if not is_answered:
             is_correct = False
             marks_awarded = 0.0
+            skipped_count += 1
         elif ans_data.selected_option == q.correct_answer:
             is_correct = True
             marks_awarded = pos
+            correct_count += 1
+            attempted_count += 1
         else:
             is_correct = False
             marks_awarded = -neg
+            incorrect_count += 1
+            attempted_count += 1
 
         score += marks_awarded
 
@@ -167,6 +185,8 @@ async def submit_attempt(
             attempt_id=attempt_id,
             question_id=ans_data.question_id,
             selected_option=ans_data.selected_option,
+            response_text=getattr(ans_data, "response_text", None),
+            marked_for_review=is_marked,
             is_correct=is_correct,
             marks_awarded=marks_awarded,
             time_taken_sec=ans_data.time_taken_sec,
@@ -174,22 +194,30 @@ async def submit_attempt(
         db.add(answer)
 
         answer_results.append({
-            "question_id":     ans_data.question_id,
-            "selected_option": ans_data.selected_option,
-            "correct_answer":  q.correct_answer,
-            "is_correct":      is_correct,
-            "marks_awarded":   marks_awarded,
+            "question_id":       ans_data.question_id,
+            "selected_option":   ans_data.selected_option,
+            "response_text":     getattr(ans_data, "response_text", None),
+            "marked_for_review": is_marked,
+            "correct_answer":    q.correct_answer,
+            "is_correct":        is_correct,
+            "marks_awarded":     marks_awarded,
         })
+
+    accuracy = round((correct_count / attempted_count) * 100, 1) if attempted_count > 0 else 0.0
 
     attempt.score = score
     attempt.total_marks = total_marks
+    attempt.accuracy = accuracy
+    attempt.correct_count = correct_count
+    attempt.incorrect_count = incorrect_count
+    attempt.skipped_count = skipped_count
+    attempt.marked_count = marked_count
     attempt.status = AttemptStatus.auto_submitted if auto else AttemptStatus.submitted
     attempt.submitted_at = datetime.utcnow()
     attempt.time_taken_sec = submission.time_taken_sec
     await db.flush()
 
     # Update leaderboard
-    accuracy = max(0.0, score / total_marks) if total_marks > 0 else 0.0
     existing_lb = await db.execute(
         select(LeaderboardEntry).where(
             LeaderboardEntry.session_id == attempt.session_id,
@@ -224,7 +252,7 @@ async def submit_attempt(
 
     await db.flush()
 
-    # Recompute all ranks for this session
+    # Recompute all ranks for this session with deterministic tie breaking
     await _recompute_ranks(db, attempt.session_id)
     return attempt, answer_results
 
@@ -306,6 +334,8 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
                 "diagram": q.diagram,
                 "isCorrect": user_ans_obj.is_correct if user_ans_obj else False,
                 "userAnswer": user_ans_obj.selected_option if user_ans_obj else None,
+                "marked_for_review": user_ans_obj.marked_for_review if user_ans_obj else False,
+                "response_text": user_ans_obj.response_text if user_ans_obj else None,
                 "marksAwarded": user_ans_obj.marks_awarded if user_ans_obj else 0.0,
                 "timeSpent": user_ans_obj.time_taken_sec if user_ans_obj else 0,
                 "options": [
@@ -316,6 +346,17 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
 
         tot_m = float(att.total_marks or sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions) or 1.0)
         pct = round((float(att.score) / tot_m) * 100, 1) if tot_m > 0 else 0.0
+
+        participants_count = len(
+            (
+                await db.execute(
+                    select(Attempt.id).where(
+                        Attempt.session_id == att.session_id,
+                        Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+                    )
+                )
+            ).scalars().all()
+        )
 
         items.append({
             "id": att.id,
@@ -328,6 +369,13 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             "total_marks": tot_m,
             "totalMarks": tot_m,
             "totalQ": len(questions),
+            "total_questions": len(questions),
+            "attempted_count": att.correct_count + att.incorrect_count,
+            "correct_count": att.correct_count,
+            "incorrect_count": att.incorrect_count,
+            "skipped_count": att.skipped_count,
+            "marked_count": att.marked_count,
+            "accuracy": att.accuracy,
             "percentage": pct,
             "status": att.status,
             "auto": att.status == AttemptStatus.auto_submitted,
@@ -337,6 +385,7 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             "time_taken_sec": att.time_taken_sec,
             "totalTimeSpent": att.time_taken_sec,
             "rank": att.rank,
+            "total_participants": max(1, participants_count),
             "has_solution_pdf": bool(quiz.solution_pdf),
             "solution_pdf": quiz.solution_pdf,
             "solution_pdf_name": quiz.solution_pdf_name,
@@ -354,11 +403,26 @@ async def _recompute_ranks(db: AsyncSession, session_id: str) -> None:
     result = await db.execute(
         select(LeaderboardEntry)
         .where(LeaderboardEntry.session_id == session_id)
-        .order_by(LeaderboardEntry.score.desc(), LeaderboardEntry.time_taken_sec.asc())
+        .order_by(
+            LeaderboardEntry.score.desc(),
+            LeaderboardEntry.time_taken_sec.asc(),
+            LeaderboardEntry.submitted_at.asc(),
+            LeaderboardEntry.student_id.asc(),
+        )
     )
     entries = list(result.scalars().all())
     for i, entry in enumerate(entries, start=1):
         entry.rank = i
+        att_res = await db.execute(
+            select(Attempt).where(
+                Attempt.session_id == session_id,
+                Attempt.student_id == entry.student_id,
+                Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+            )
+        )
+        att = att_res.scalar_one_or_none()
+        if att:
+            att.rank = i
     await db.flush()
 
 

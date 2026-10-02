@@ -28,7 +28,7 @@ os.makedirs(f"{settings.upload_dir}/question_images", exist_ok=True)
 os.makedirs(f"{settings.upload_dir}/diagrams", exist_ok=True)
 
 app = FastAPI(
-    title="QuizForge API",
+    title="QuiZee API",
     description="AI-powered Quiz Platform with real-time WebSockets",
     version="3.0.0",
     lifespan=lifespan,

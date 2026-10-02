@@ -33,7 +33,7 @@ export default function LoginScreen() {
     <div style={{ minHeight:'100vh', display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:'2rem', background:'#f4f6fb' }}>
       <div style={{ textAlign:'center', marginBottom:'2.2rem' }}>
         <div style={{ width:76,height:76,borderRadius:22,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:34,margin:'0 auto 18px',boxShadow:'0 8px 32px rgba(99,102,241,.3)' }}>📝</div>
-        <h1 style={{ fontSize:32,fontWeight:900,margin:'0 0 7px',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}>QuizForge</h1>
+        <h1 style={{ fontSize:32,fontWeight:900,margin:'0 0 7px',background:'linear-gradient(135deg,#6366f1,#8b5cf6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}>QuiZee</h1>
         <p style={{ color:'#6b7280', margin:0, fontSize:15 }}>Who are you?</p>
       </div>
       <div style={{ display:'grid', gap:14, width:'100%', maxWidth:420 }}>
@@ -114,8 +114,8 @@ export default function LoginScreen() {
         {/* Demo credentials hint */}
         <div style={{ marginTop:16, padding:'10px 12px', background:'#f5f3ff', borderRadius:9, fontSize:12, color:'#6366f1', lineHeight:1.7 }}>
           <strong>Demo credentials:</strong><br/>
-          Admin: admin@quizforge.com / Admin@123<br/>
-          Student: student@quizforge.com / Student@123
+          Admin: admin@quizee.com / Admin@123<br/>
+          Student: student@quizee.com / Student@123
         </div>
       </div>
     </div>

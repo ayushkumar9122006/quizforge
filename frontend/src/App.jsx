@@ -49,7 +49,7 @@ export default function App() {
         <nav style={{ background:'#fff', borderBottom:'1px solid #f3f4f6', padding:'0 22px', display:'flex', alignItems:'center', justifyContent:'space-between', height:52, position:'sticky', top:0, zIndex:100 }}>
           <div onClick={() => setScreen('home')} style={{ display:'flex', alignItems:'center', gap:9, cursor:'pointer' }}>
             <div style={{ width:29,height:29,borderRadius:8,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14 }}>📝</div>
-            <span style={{ fontWeight:800,fontSize:15,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}>QuizForge</span>
+            <span style={{ fontWeight:800,fontSize:15,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}>QuiZee</span>
           </div>
           <div style={{ display:'flex', alignItems:'center', gap:11 }}>
             <div style={{ display:'flex', alignItems:'center', gap:7, fontSize:13, color:'#6b7280' }}>

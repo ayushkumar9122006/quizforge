@@ -240,7 +240,7 @@ async def seed():
     async with AsyncSessionLocal() as db:
 
         # ── Admin ───────────────────────────────────────────────────────────────
-        admin_email = os.getenv("SEED_ADMIN_EMAIL", "admin@quizforge.com")
+        admin_email = os.getenv("SEED_ADMIN_EMAIL", "admin@quizee.com")
         admin_pass  = os.getenv("SEED_ADMIN_PASSWORD", "Admin@123")
         existing    = await get_user_by_email(db, admin_email)
         if not existing:
@@ -253,8 +253,16 @@ async def seed():
             admin = existing
             print(f"• Admin exists:    {admin_email}")
 
+        # Legacy admin for backward compatibility
+        if admin_email != "admin@quizforge.com" and not await get_user_by_email(db, "admin@quizforge.com"):
+            await create_user(db, UserCreate(
+                email="admin@quizforge.com", name="Demo Admin (Legacy)",
+                password="Admin@123", role=UserRole.admin
+            ))
+            print("✓ Legacy admin created: admin@quizforge.com")
+
         # ── Student ─────────────────────────────────────────────────────────────
-        student_email = os.getenv("SEED_STUDENT_EMAIL", "student@quizforge.com")
+        student_email = os.getenv("SEED_STUDENT_EMAIL", "student@quizee.com")
         student_pass  = os.getenv("SEED_STUDENT_PASSWORD", "Student@123")
         if not await get_user_by_email(db, student_email):
             await create_user(db, UserCreate(
@@ -265,8 +273,16 @@ async def seed():
         else:
             print(f"• Student exists:  {student_email}")
 
+        # Legacy student for backward compatibility
+        if student_email != "student@quizforge.com" and not await get_user_by_email(db, "student@quizforge.com"):
+            await create_user(db, UserCreate(
+                email="student@quizforge.com", name="Demo Student (Legacy)",
+                password="Student@123", role=UserRole.student
+            ))
+            print("✓ Legacy student created: student@quizforge.com")
+
         # ── Extra student ────────────────────────────────────────────────────────
-        s2_email = "student2@quizforge.com"
+        s2_email = "student2@quizee.com"
         if not await get_user_by_email(db, s2_email):
             await create_user(db, UserCreate(
                 email=s2_email, name="Priya Sharma",

@@ -1,15 +1,25 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 from database.config import get_db
-from schemas.quiz import QuizCreate, QuizUpdate, QuizOut, QuizStudentOut
+from schemas.quiz import (
+    QuizCreate, QuizUpdate, QuizOut, QuizStudentOut,
+    QuizAvailabilityUpdate,
+    BulkImportAnalyzeResponse, BulkImportConfirmRequest
+)
+from schemas.session import StartQuizResponse
 from crud.quiz import (
     create_quiz, get_quiz, get_quizzes_by_creator,
-    get_published_quizzes, update_quiz, delete_quiz, publish_quiz
+    get_published_quizzes, update_quiz, delete_quiz, publish_quiz,
+    add_questions_to_quiz
 )
+from services.pdf_importer_service import analyze_pdf
 from utils.dependencies import require_admin, get_current_user
-from models.all_models import User, UserRole
+from models.all_models import User, UserRole, QuizStatus, SessionStatus, AttemptStatus, QuizSession, Attempt
 from typing import List
+from datetime import datetime, timezone
+import secrets
 import base64
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
@@ -91,6 +101,144 @@ async def publish(
     if not quiz:
         raise HTTPException(status_code=404, detail="Quiz not found")
     return quiz
+
+
+@router.patch("/{quiz_id}/availability", response_model=QuizOut)
+async def update_availability(
+    quiz_id: str,
+    data: QuizAvailabilityUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    quiz.availability_start = data.availability_start
+    quiz.availability_end = data.availability_end
+    await db.flush()
+    return await get_quiz(db, quiz_id)
+
+
+@router.post("/{quiz_id}/start-attempt", response_model=StartQuizResponse)
+async def start_quiz_attempt(
+    quiz_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Starts or resumes an attempt for a published quiz based on admin-defined availability.
+    Enforces server-side time validation and deadline clamping.
+    """
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    if quiz.status != QuizStatus.published and user.role != UserRole.admin:
+        raise HTTPException(status_code=400, detail="This quiz is not published yet.")
+
+    now = datetime.now(timezone.utc)
+
+    # Server-side availability validation
+    if quiz.availability_start:
+        start_tz = quiz.availability_start
+        if start_tz.tzinfo is None:
+            start_tz = start_tz.replace(tzinfo=timezone.utc)
+        if now < start_tz:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This quiz is scheduled to start on {start_tz.strftime('%d %B %Y, %I:%M %p UTC')}. Not available yet.",
+            )
+
+    if quiz.availability_end:
+        end_tz = quiz.availability_end
+        if end_tz.tzinfo is None:
+            end_tz = end_tz.replace(tzinfo=timezone.utc)
+        if now > end_tz:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This quiz ended on {end_tz.strftime('%d %B %Y, %I:%M %p UTC')}. No new attempts permitted.",
+            )
+
+    # Verify if student already submitted
+    has_submitted = await db.execute(
+        select(Attempt.id)
+        .join(QuizSession, Attempt.session_id == QuizSession.id)
+        .where(
+            QuizSession.quiz_id == quiz_id,
+            Attempt.student_id == user.id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+    )
+    if has_submitted.scalar_one_or_none():
+        raise HTTPException(status_code=400, detail="You have already completed this test.")
+
+    # Find or create default active session for this quiz
+    session_res = await db.execute(
+        select(QuizSession).where(
+            QuizSession.quiz_id == quiz_id,
+            QuizSession.status == SessionStatus.active,
+        )
+    )
+    session = session_res.scalar_one_or_none()
+    if not session:
+        room_code = secrets.token_hex(3).upper()
+        session = QuizSession(
+            quiz_id=quiz_id,
+            room_code=room_code,
+            status=SessionStatus.active,
+            started_at=datetime.utcnow(),
+            max_students=1000,
+        )
+        db.add(session)
+        await db.flush()
+
+    # Find or create in-progress attempt for this student
+    attempt_res = await db.execute(
+        select(Attempt).where(
+            Attempt.session_id == session.id,
+            Attempt.student_id == user.id,
+            Attempt.status == AttemptStatus.in_progress,
+        )
+    )
+    attempt = attempt_res.scalar_one_or_none()
+    resumed = False
+    if attempt:
+        resumed = True
+    else:
+        attempt = Attempt(
+            session_id=session.id,
+            student_id=user.id,
+            status=AttemptStatus.in_progress,
+            started_at=datetime.utcnow(),
+        )
+        db.add(attempt)
+        await db.flush()
+
+    # Calculate test duration and deadline clamping
+    total_q = len(quiz.questions) or 1
+    base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
+
+    effective_duration_sec = base_duration_sec
+    if quiz.availability_end:
+        end_tz = quiz.availability_end
+        if end_tz.tzinfo is None:
+            end_tz = end_tz.replace(tzinfo=timezone.utc)
+        remaining_window_sec = int((end_tz - now).total_seconds())
+        if remaining_window_sec < base_duration_sec:
+            effective_duration_sec = max(60, remaining_window_sec)
+
+    if resumed:
+        elapsed = int((datetime.utcnow() - attempt.started_at).total_seconds())
+        effective_duration_sec = max(10, effective_duration_sec - elapsed)
+
+    return StartQuizResponse(
+        session_id=session.id,
+        attempt_id=attempt.id,
+        quiz_id=quiz.id,
+        duration_sec=effective_duration_sec,
+        started_at=attempt.started_at,
+        resumed=resumed,
+    )
 
 
 @router.delete("/{quiz_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -205,3 +353,75 @@ async def delete_solution_pdf(
     quiz.solution_pdf_name = None
     await db.flush()
     return {"status": "ok"}
+
+
+# ── Bulk Import Endpoints ──────────────────────────────────────────────────────
+
+@router.post("/import/analyze-pdf", response_model=BulkImportAnalyzeResponse)
+async def import_analyze_pdf(
+    file: UploadFile = File(...),
+    default_pos_marks: float = Form(4.0),
+    default_neg_marks: float = Form(1.0),
+    default_section: str = Form("General"),
+    admin: User = Depends(require_admin),
+):
+    """
+    Accepts an uploaded PDF, performs hybrid layout analysis,
+    extracts all questions, images/diagrams, options, and printed answers,
+    and returns a structured intermediate representation for admin review.
+    Does NOT save anything directly to the database.
+    """
+    if not file.filename.lower().endswith(".pdf"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="File must be a PDF document."
+        )
+
+    # Read file contents (limit to 50MB)
+    file_bytes = await file.read()
+    if len(file_bytes) > 50 * 1024 * 1024:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="PDF size exceeds 50MB limit."
+        )
+
+    try:
+        response = await analyze_pdf(
+            file_bytes=file_bytes,
+            filename=file.filename,
+            default_pos_marks=default_pos_marks,
+            default_neg_marks=default_neg_marks,
+            default_section=default_section,
+        )
+        return response
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to analyze PDF: {str(e)}"
+        )
+
+
+@router.post("/{quiz_id}/import/confirm", response_model=QuizOut)
+async def import_confirm_questions(
+    quiz_id: str,
+    payload: BulkImportConfirmRequest,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Appends admin-approved questions to the specified quiz.
+    Ensures that only questions approved and reviewed by the admin
+    are saved to the production database.
+    """
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    if quiz.creator_id != admin.id:
+        raise HTTPException(status_code=403, detail="Only quiz creator can import questions")
+
+    if not payload.questions:
+        raise HTTPException(status_code=400, detail="No questions provided for import")
+
+    updated_quiz = await add_questions_to_quiz(db, quiz_id, payload.questions)
+    return updated_quiz
+

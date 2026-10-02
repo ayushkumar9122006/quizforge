@@ -83,10 +83,25 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   const totPct   = (totLeft / totalTime) * 100
   const qPct     = (qTime   / perQ)      * 100
   const isMrk    = marked.has(cur)
-  const hasDiag  = !!q.diagram
+  const isVisualMatch = Boolean(
+    q.diagram && (
+      q.question_type === 'match_column' ||
+      q.text?.toLowerCase().includes('match the column') ||
+      q.text?.toLowerCase().includes('match each')
+    )
+  )
+  const hasDiag  = !!q.diagram && !isVisualMatch
 
   const toggleMark = () =>
     setMarked(m => { const n = new Set(m); n.has(cur) ? n.delete(cur) : n.add(cur); return n })
+
+  const clearResponse = () => {
+    setAnswers(prev => {
+      const next = { ...prev }
+      delete next[cur]
+      return next
+    })
+  }
 
   return (
     <div className="qa-root">
@@ -152,6 +167,11 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
               <span style={{ fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:5, background: (q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#fef2f2' : '#f3f4f6', color: (q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#b91c1c' : '#6b7280', border: `1px solid ${(q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? '#fca5a5' : '#e5e7eb'}` }}>
                 {(q.negative_marks !== undefined ? q.negative_marks : 0) > 0 ? `-${q.negative_marks} negative` : 'No negative marking'}
               </span>
+              {(q.explanation?.includes('Page') || q.source_page) && (
+                <span style={{ fontSize:11, fontWeight:700, padding:'2px 7px', borderRadius:5, background:'#ede9fe', color:'#6d28d9', border:'1px solid #ddd6fe' }}>
+                  📄 {q.source_page ? `Page ${q.source_page}` : q.explanation}
+                </span>
+              )}
             </div>
             {isMrk && <span className="tag tag-yellow">🔖 Marked</span>}
             <div style={{ flex:1, minWidth:60, height:3, background:'#f3f4f6', borderRadius:2, overflow:'hidden' }}>
@@ -180,6 +200,23 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
                 <p style={{ fontSize:15, fontWeight:700, margin:'0 0 10px', lineHeight:1.65, color:'#111827', flexShrink:0 }}>
                   {q.text}
                 </p>
+
+                {/* Cropped visual Match-the-Column table */}
+                {isVisualMatch && (
+                  <div style={{ margin:'6px 0 14px', borderRadius:9, overflow:'hidden', border:'1.5px solid #e5e7eb', background:'#f9fafb', padding:'8px', textAlign:'center', flexShrink:0 }}>
+                    <div style={{ fontSize:11, fontWeight:700, color:'#4f46e5', marginBottom:6, textAlign:'left', display:'flex', alignItems:'center', gap:5 }}>
+                      <span>📊</span> Original Matching Table (from PDF)
+                    </div>
+                    <img
+                      src={q.diagram}
+                      alt="Original Matching Table"
+                      onClick={() => setLightbox(q.diagram)}
+                      style={{ maxWidth:'100%', maxHeight:320, objectFit:'contain', cursor:'zoom-in', display:'block', margin:'0 auto', borderRadius:6 }}
+                    />
+                    <span style={{ fontSize:10, color:'#9ca3af', display:'block', marginTop:4 }}>🔍 Click image to enlarge table</span>
+                  </div>
+                )}
+
                 <div style={{ display:'grid', gap:7, flex:1 }}>
                   {q.options.map((opt, oi) => {
                     const sel  = answers[cur] === oi
@@ -206,17 +243,42 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
                 </div>
               </div>
 
-              {/* Mark + nav */}
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, gap:8 }}>
-                <button
-                  onClick={toggleMark}
-                  style={{ display:'flex',alignItems:'center',gap:5,padding:'6px 13px',borderRadius:20,fontSize:12,fontWeight:700,cursor:'pointer',border:'1.5px solid',borderColor:isMrk?'#f59e0b':'#d1d5db',background:isMrk?'#fef3c7':'#fff',color:isMrk?'#92400e':'#9ca3af' }}>
-                  {isMrk ? '🔖 Marked' : '🏳 Mark for later'}
-                </button>
+              {/* Actions row: Mark for review + Clear Response + Status */}
+              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginTop:8, gap:8, flexWrap:'wrap' }}>
+                <div style={{ display:'flex', gap:8, alignItems:'center' }}>
+                  <button
+                    type="button"
+                    onClick={toggleMark}
+                    style={{ display:'flex',alignItems:'center',gap:5,padding:'6px 13px',borderRadius:20,fontSize:12,fontWeight:700,cursor:'pointer',border:'1.5px solid',borderColor:isMrk?'#f59e0b':'#d1d5db',background:isMrk?'#fef3c7':'#fff',color:isMrk?'#92400e':'#6b7280' }}>
+                    {isMrk ? '🔖 Marked' : '🏳 Mark for later'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={clearResponse}
+                    disabled={answers[cur] === undefined}
+                    style={{
+                      display:'flex',
+                      alignItems:'center',
+                      gap:5,
+                      padding:'6px 13px',
+                      borderRadius:20,
+                      fontSize:12,
+                      fontWeight:700,
+                      cursor: answers[cur] !== undefined ? 'pointer' : 'not-allowed',
+                      border:'1.5px solid #e5e7eb',
+                      background: answers[cur] !== undefined ? '#fef2f2' : '#f9fafb',
+                      color: answers[cur] !== undefined ? '#dc2626' : '#9ca3af',
+                      transition:'all .15s ease'
+                    }}
+                    title="Remove selected option for this question"
+                  >
+                    🗑️ Clear Response
+                  </button>
+                </div>
                 <span style={{ fontSize:12 }}>
                   {answers[cur] !== undefined
                     ? <span style={{ color:'#059669', fontWeight:700 }}>✓ Answered</span>
-                    : <span style={{ color:'#d1d5db' }}>Not answered</span>}
+                    : <span style={{ color:'#9ca3af' }}>Not answered</span>}
                 </span>
               </div>
               <div style={{ display:'flex', gap:8, marginTop:8 }}>

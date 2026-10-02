@@ -12,7 +12,7 @@ async def call_openrouter(messages: list, max_tokens: int = 1000) -> str:
         "Authorization": f"Bearer {settings.openrouter_api_key}",
         "Content-Type": "application/json",
         "HTTP-Referer": settings.frontend_url,
-        "X-Title": "QuizForge",
+        "X-Title": "QuiZee",
     }
     payload = {
         "model": settings.openrouter_model,

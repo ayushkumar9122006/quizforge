@@ -96,7 +96,8 @@ export default function QuestionEditor({
   onSave,
   onBack,
   saving,
-  saveError
+  saveError,
+  onBulkImportClick
 }) {
   const [questions, setQuestions] = useState(
     initQuestions.map(q => ({
@@ -232,7 +233,18 @@ export default function QuestionEditor({
             Q{qInSec}/{totInSec} in section · Overall {cur + 1}/{questions.length}
           </span>
         </div>
-        <button className="btn-ghost" onClick={onBack}>← Exit</button>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          {onBulkImportClick && (
+            <button
+              type="button"
+              className="btn-sec"
+              onClick={onBulkImportClick}
+              style={{ fontSize:12, padding:'5px 12px', display:'flex', alignItems:'center', gap:5, fontWeight:700, color:'#4f46e5', borderColor:'#c7d2fe', background:'#f5f3ff', cursor:'pointer' }}>
+              ⚡ Bulk Import from PDF
+            </button>
+          )}
+          <button className="btn-ghost" onClick={onBack}>← Exit</button>
+        </div>
       </div>
 
       {/* Progress bar */}

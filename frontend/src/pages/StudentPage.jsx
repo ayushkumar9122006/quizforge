@@ -1,12 +1,32 @@
 import { useState, useEffect, useCallback } from 'react'
-import StudentHome    from '../components/Student/StudentHome.jsx'
+import StudentHome from '../components/Student/StudentHome.jsx'
 import AttemptHistory from '../components/Student/AttemptHistory.jsx'
-import QuizAttempt    from '../components/Quiz/QuizAttempt.jsx'
-import Results        from '../components/Quiz/Results.jsx'
-import WaitingRoom    from '../components/Quiz/WaitingRoom.jsx'
+import QuizAttempt from '../components/Quiz/QuizAttempt.jsx'
+import Results from '../components/Quiz/Results.jsx'
+import WaitingRoom from '../components/Quiz/WaitingRoom.jsx'
 import AnalyticsDashboard from '../components/Admin/Analytics/AnalyticsDashboard.jsx'
-import { useRoom }    from '../hooks/useRoom.js'
-import { joinSession, submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
+import CelebrationOverlay from '../components/Quiz/CelebrationOverlay.jsx'
+import { useRoom } from '../hooks/useRoom.js'
+import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
+import { startQuizAttempt } from '../services/quizService.js'
+
+function formatIST(dateStr) {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    return d.toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true
+    }) + ' IST'
+  } catch {
+    return dateStr
+  }
+}
 
 export default function StudentPage({
   user, screen, setScreen,
@@ -15,19 +35,19 @@ export default function StudentPage({
   viewingAttempt, setViewingAttempt,
   onTake, onResult, onLogout,
 }) {
-  const [session,           setSession]           = useState(null)
-  const [leaderboard,       setLeaderboard]       = useState([])
-  const [inWaiting,         setInWaiting]         = useState(false)
-  const [analyticsQuiz,     setAnalyticsQuiz]     = useState(null)
+  const [session, setSession] = useState(null)
+  const [leaderboard, setLeaderboard] = useState([])
+  const [inWaiting, setInWaiting] = useState(false)
+  const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
 
-  // Test instructions modal state — shown BEFORE the room code modal
+  // Pre-test instructions modal state
   const [instructionTarget, setInstructionTarget] = useState(null)
+  const [startingAttempt, setStartingAttempt] = useState(false)
+  const [startError, setStartError] = useState(null)
 
-  // Room-code join modal state — opened only after instructions are accepted
-  const [joinTarget,        setJoinTarget]        = useState(null)
-  const [roomCode,          setRoomCode]          = useState('')
-  const [joinError,         setJoinError]         = useState(null)
-  const [joining,           setJoining]           = useState(false)
+  // Celebration overlay state
+  const [celebrationResult, setCelebrationResult] = useState(null)
+  const [pendingResultsData, setPendingResultsData] = useState(null)
 
   // Load student's attempts from the database on mount
   const loadAttempts = async () => {
@@ -36,28 +56,39 @@ export default function StudentPage({
       if (Array.isArray(data)) {
         const mapped = data.map(item => ({
           id: item.id,
-          date: item.submitted_at,
-          quizTitle: item.quiz_title,
-          quizId: item.quiz_id,
+          date: item.submitted_at || item.date,
+          quizTitle: item.quiz_title || item.quizTitle,
+          quizId: item.quiz_id || item.quizId,
           sessionId: item.session_id,
           score: item.score,
           total_marks: item.total_marks,
-          totalQ: item.questions?.length || 0,
+          totalQ: item.questions?.length || item.total_questions || 0,
+          total_questions: item.questions?.length || item.total_questions || 0,
+          attempted_count: item.attempted_count,
+          correct_count: item.correct_count,
+          incorrect_count: item.incorrect_count,
+          skipped_count: item.skipped_count,
+          marked_count: item.marked_count,
           accuracy: item.accuracy,
+          rank: item.rank,
+          total_participants: item.total_participants,
           time_taken_sec: item.time_taken_sec,
           totalTimeSpent: item.time_taken_sec,
-          auto: item.auto_submitted,
+          auto: item.auto,
           solution_pdf: item.solution_pdf,
           solution_pdf_name: item.solution_pdf_name,
+          has_solution_pdf: item.has_solution_pdf,
           questions: item.questions || [],
           answers: (item.questions || []).reduce((acc, q, idx) => {
             if (q.selected_option !== null && q.selected_option !== undefined) {
               acc[idx] = q.selected_option
+            } else if (q.userAnswer !== null && q.userAnswer !== undefined) {
+              acc[idx] = q.userAnswer
             }
             return acc
           }, {}),
           questionTimes: (item.questions || []).reduce((acc, q, idx) => {
-            acc[idx] = q.time_taken_sec || 0
+            acc[idx] = q.time_taken_sec || q.timeSpent || 0
             return acc
           }, {})
         }))
@@ -74,64 +105,55 @@ export default function StudentPage({
 
   const room = useRoom(session?.room_code)
 
-  // Student clicks Start → show instructions screen FIRST
+  // Student clicks Start on a quiz card → show pre-test instruction screen FIRST
   const handleTake = (quiz) => {
     setInstructionTarget(quiz)
-    setJoinTarget(null)
-    setRoomCode('')
-    setJoinError(null)
+    setStartError(null)
   }
 
-  const handleJoinCancel = () => {
-    setJoinTarget(null)
-    setRoomCode('')
-    setJoinError(null)
-  }
+  // Pre-test instruction screen: Student clicks "Start Test Now"
+  const handleStartAttemptNow = async () => {
+    if (!instructionTarget || startingAttempt) return
+    setStartingAttempt(true)
+    setStartError(null)
 
-  const handleJoinSubmit = async (e) => {
-    e.preventDefault()
-    const code = roomCode.trim()
-    if (!code) { setJoinError('Enter the room code your admin shared.'); return }
-
-    setJoining(true)
-    setJoinError(null)
     try {
-      const sess = await joinSession(code)
-      if (sess.quiz_id !== joinTarget.id) {
-        setJoinError('That room code is for a different quiz.')
-        return
+      const resp = await startQuizAttempt(instructionTarget.id)
+      setSession({
+        id: resp.session_id,
+        room_code: '',
+      })
+
+      // Update quiz effective duration if clamped by closing deadline
+      const configuredQuiz = {
+        ...instructionTarget,
+        effectiveDurationSec: resp.duration_sec,
+        timePerQ: resp.duration_sec / (instructionTarget.questions?.length || 1),
       }
-      setSession(sess)
-      setInWaiting(true)
-      onTake(joinTarget)
-      setJoinTarget(null)
-      setRoomCode('')
-    } catch (e) {
-      setJoinError(e?.response?.data?.detail || 'Invalid or expired room code.')
+
+      setInWaiting(false)
+      onTake(configuredQuiz)
+      setInstructionTarget(null)
+      setScreen('quiz')
+    } catch (err) {
+      console.error('Failed to start attempt:', err)
+      setStartError(err?.response?.data?.detail || 'Failed to start quiz attempt. Please check availability window.')
     } finally {
-      setJoining(false)
+      setStartingAttempt(false)
     }
   }
 
-  // Admin fires quiz:started via WS → leave waiting room
-  const handleQuizStart = useCallback(() => {
-    setInWaiting(false)
-  }, [])
-
-  const handleLeaveRoom = () => {
-    setInWaiting(false)
-    setSession(null)
-    setScreen('home')
-  }
-
+  // Submit attempt from QuizAttempt component
   const handleSubmit = async (answers, auto, marked = new Set(), questionTimes = {}, totalTimeSpent = 0) => {
     if (!activeQuiz || !session) return
     const questions = activeQuiz.questions || []
 
     const payload = questions.map((q, i) => ({
-      question_id:     q.id,
+      question_id: q.id,
       selected_option: answers[i] ?? null,
-      time_taken_sec:  questionTimes[i] || 0,
+      response_text: null,
+      marked_for_review: marked.has(i),
+      time_taken_sec: questionTimes[i] || 0,
     }))
 
     let attemptResult
@@ -143,7 +165,7 @@ export default function StudentPage({
       return
     }
 
-    // The backend is the ONLY source of truth for correct answers and scoring
+    // Backend is the authoritative source of truth for evaluation, scores, and review statuses
     const correctMap = {}
     for (const r of attemptResult.results || []) {
       correctMap[r.question_id] = r
@@ -157,15 +179,18 @@ export default function StudentPage({
       return {
         ...q,
         correct: correctAns,
+        correct_answer: correctAns,
         selectedOption: userAns,
+        userAnswer: userAns,
         isCorrect,
+        marked_for_review: marked.has(i) || resItem?.marked_for_review,
         marks_awarded: resItem?.marks_awarded,
         timeSpent: questionTimes[i] || 0,
       }
     })
 
-    const score = attemptResult.score !== undefined ? attemptResult.score : (attemptResult.results || []).filter(r => r.is_correct).length
-    const totalMarks = attemptResult.total_marks !== undefined ? attemptResult.total_marks : questions.reduce((sum, q) => sum + (Number(q.positive_marks ?? q.marks ?? 4)), 0)
+    const score = attemptResult.score !== undefined ? attemptResult.score : 0
+    const totalMarks = attemptResult.total_marks !== undefined ? attemptResult.total_marks : questions.reduce((sum, q) => sum + Number(q.positive_marks ?? q.marks ?? 4), 0)
 
     // Compute Section-wise Breakdown
     const secMap = {}
@@ -199,7 +224,7 @@ export default function StudentPage({
       accuracyPct: s.total > 0 ? Math.round((s.correct / s.total) * 100) : 0,
     }))
 
-    // Fetch final leaderboard for the results screen
+    // Fetch leaderboard
     let lb = []
     try {
       lb = await getLeaderboard(session.id)
@@ -208,17 +233,20 @@ export default function StudentPage({
     }
     setLeaderboard(lb)
 
-    // Store locally and reload from backend for fresh attempt history
-    const attempt = {
-      id:        attemptResult.id,
-      date:      new Date().toISOString(),
-      quizTitle: activeQuiz.title,
-      quizId:    activeQuiz.id,
+    const finalResultData = {
+      id: attemptResult.id,
+      answers,
       score,
       total_marks: totalMarks,
-      totalQ:    resolved.length,
+      accuracy: attemptResult.accuracy,
+      correct_count: attemptResult.correct_count,
+      incorrect_count: attemptResult.incorrect_count,
+      skipped_count: attemptResult.skipped_count,
+      marked_count: attemptResult.marked_count,
+      attempted_count: attemptResult.attempted_count,
+      rank: attemptResult.rank,
+      total_participants: lb.length || 1,
       auto,
-      answers,
       questions: resolved,
       sectionBreakdown,
       totalTimeSpent,
@@ -226,129 +254,136 @@ export default function StudentPage({
       solution_pdf: activeQuiz.solution_pdf,
       solution_pdf_name: activeQuiz.solution_pdf_name,
     }
-    setAttempts(prev => [...prev, attempt])
+
+    // Persist locally and refresh database list
+    const attempt = {
+      id: attemptResult.id,
+      date: new Date().toISOString(),
+      quizTitle: activeQuiz.title,
+      quizId: activeQuiz.id,
+      ...finalResultData
+    }
+    setAttempts(prev => [attempt, ...prev.filter(a => a.id !== attempt.id)])
     loadAttempts()
 
-    onResult({
-      answers,
-      score,
-      total_marks: totalMarks,
-      auto,
-      questions: resolved,
-      sectionBreakdown,
-      totalTimeSpent,
-      questionTimes,
-      solution_pdf: activeQuiz.solution_pdf,
-      solution_pdf_name: activeQuiz.solution_pdf_name,
-    })
+    // Trigger celebration overlay before proceeding to results
+    setPendingResultsData(finalResultData)
+    setCelebrationResult(attemptResult)
+  }
+
+  const handleFinishCelebration = () => {
+    if (pendingResultsData) {
+      onResult(pendingResultsData)
+    }
+    setCelebrationResult(null)
+    setPendingResultsData(null)
+    setScreen('results')
   }
 
   const deleteAttempt = id => setAttempts(prev => prev.filter(a => a.id !== id))
 
-  // ── Instructions modal shown BEFORE room-code join modal ───────────────────
+  // ── Pre-Test Instructions Modal (Feature 6) ──────────────────────────────────
   const instructionModal = instructionTarget && (
-    <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.58)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:400,padding:'1rem' }}>
-      <div style={{ background:'#fff',borderRadius:20,padding:'1.8rem 2rem',maxWidth:540,width:'100%',boxShadow:'0 20px 60px rgba(0,0,0,.18)',maxHeight:'90vh',overflowY:'auto' }}>
-        <div style={{ display:'flex', alignItems:'center', gap:10, marginBottom:16 }}>
-          <div style={{ width:42, height:42, borderRadius:12, background:'#ede9fe', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, flexShrink:0 }}>📝</div>
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(10, 10, 25, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: '1.2rem' }}>
+      <div style={{ background: '#fff', borderRadius: 24, padding: '2rem 2.2rem', maxWidth: 580, width: '100%', boxShadow: '0 25px 60px rgba(0,0,0,0.22)', maxHeight: '90vh', overflowY: 'auto' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 18 }}>
+          <div style={{ width: 48, height: 48, borderRadius: 14, background: 'linear-gradient(135deg, #ede9fe, #ddd6fe)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, flexShrink: 0 }}>
+            📝
+          </div>
           <div>
-            <h3 style={{ margin:0, fontSize:19, fontWeight:800, color:'#111827' }}>Test Instructions</h3>
-            <p style={{ margin:'2px 0 0', fontSize:13, color:'#6b7280', fontWeight:600 }}>{instructionTarget.title}</p>
+            <h3 style={{ margin: 0, fontSize: 20, fontWeight: 900, color: '#111827' }}>Test Instructions</h3>
+            <p style={{ margin: '2px 0 0', fontSize: 13, color: '#6366f1', fontWeight: 700 }}>{instructionTarget.title}</p>
           </div>
         </div>
 
         {/* Quick parameters summary */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fit, minmax(110px, 1fr))', gap:9, marginBottom:16 }}>
-          <div style={{ background:'#f9fafb', padding:'8px 10px', borderRadius:10, border:'1px solid #e5e7eb', textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#6b7280', fontWeight:700 }}>QUESTIONS</div>
-            <div style={{ fontSize:15, fontWeight:800, color:'#111827', marginTop:2 }}>{instructionTarget.questions?.length || 0} Qs</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10, marginBottom: 18 }}>
+          <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>QUESTIONS</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>{instructionTarget.questions?.length || 0} Qs</div>
           </div>
-          <div style={{ background:'#f9fafb', padding:'8px 10px', borderRadius:10, border:'1px solid #e5e7eb', textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#6b7280', fontWeight:700 }}>DURATION</div>
-            <div style={{ fontSize:15, fontWeight:800, color:'#111827', marginTop:2 }}>
-              ~{Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.timePerQ || 300) / 60))} min
+          <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>DURATION</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>
+              ~{Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min
             </div>
           </div>
-          <div style={{ background:'#ecfdf5', padding:'8px 10px', borderRadius:10, border:'1px solid #a7f3d0', textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#065f46', fontWeight:700 }}>CORRECT</div>
-            <div style={{ fontSize:15, fontWeight:800, color:'#059669', marginTop:2 }}>
+          <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: 12, border: '1px solid #a7f3d0', textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: '#065f46', fontWeight: 800 }}>CORRECT</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#059669', marginTop: 2 }}>
               +{instructionTarget.questions?.[0]?.positive_marks ?? 4} marks
             </div>
           </div>
-          <div style={{ background:'#fef2f2', padding:'8px 10px', borderRadius:10, border:'1px solid #fca5a5', textAlign:'center' }}>
-            <div style={{ fontSize:11, color:'#991b1b', fontWeight:700 }}>NEGATIVE</div>
-            <div style={{ fontSize:15, fontWeight:800, color:'#dc2626', marginTop:2 }}>
+          <div style={{ background: '#fef2f2', padding: '10px', borderRadius: 12, border: '1px solid #fecaca', textAlign: 'center' }}>
+            <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 800 }}>NEGATIVE</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#dc2626', marginTop: 2 }}>
               -{instructionTarget.questions?.[0]?.negative_marks ?? 1} marks
             </div>
           </div>
         </div>
 
-        {/* Instructions content */}
-        <div style={{ background:'#f8fafc', padding:'14px 16px', borderRadius:12, border:'1px solid #e2e8f0', fontSize:13, color:'#334155', lineHeight:1.7, marginBottom:20, whiteSpace:'pre-line' }}>
-          {instructionTarget.instructions || (
-            '• Read each question carefully before choosing an answer.\n' +
-            '• Each question has positive marks for correct answers and negative marking for incorrect answers.\n' +
-            '• Unanswered / skipped questions do not carry any penalty.\n' +
-            '• The test will auto-submit when the overall timer expires.'
+        {instructionTarget.availability_end && (
+          <div style={{ padding: '8px 12px', background: '#eff6ff', borderRadius: 10, border: '1px solid #bfdbfe', fontSize: 12, color: '#1e40af', fontWeight: 700, marginBottom: 16 }}>
+            🕒 Availability Deadline: {formatIST(instructionTarget.availability_end)} (Timer will be clamped to deadline if remaining time is less than test duration).
+          </div>
+        )}
+
+        {/* Detailed Instructions content */}
+        <div style={{ background: '#f8fafc', padding: '16px 18px', borderRadius: 14, border: '1px solid #e2e8f0', fontSize: 13, color: '#334155', lineHeight: 1.7, marginBottom: 18 }}>
+          <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 8, fontSize: 14 }}>Rules & Guidelines:</div>
+          <ul style={{ margin: 0, paddingLeft: 18 }}>
+            <li><strong>Timer starts immediately</strong> upon clicking "Start Test Now".</li>
+            <li><strong>Clear Response:</strong> Use the "Clear Response" button anytime to deselect an answer without affecting your "Mark for Review" status.</li>
+            <li><strong>Mark for Review:</strong> You can mark questions for later review and return to them using the question palette.</li>
+            <li><strong>Scoring:</strong> Correct answers receive positive marks. Incorrect answers receive negative marks penalty. Unanswered/skipped questions carry zero penalty.</li>
+            <li><strong>Auto-Submit:</strong> The test will auto-submit when the overall timer expires. Ensure you finalize your answers in time.</li>
+          </ul>
+          {instructionTarget.instructions && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #cbd5e1', whiteSpace: 'pre-line' }}>
+              <strong>Instructor's Notes:</strong><br />
+              {instructionTarget.instructions}
+            </div>
           )}
         </div>
 
-        <div style={{ display:'flex', gap:9 }}>
-          <button type="button" className="btn-sec" style={{ flex:1 }} onClick={() => setInstructionTarget(null)}>Cancel</button>
+        {startError && (
+          <div style={{ padding: '10px 14px', background: '#fef2f2', border: '1px solid #fca5a5', borderRadius: 10, fontSize: 13, color: '#dc2626', marginBottom: 16 }}>
+            ⚠ {startError}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 10 }}>
+          <button
+            type="button"
+            className="btn-sec"
+            style={{ flex: 1, padding: '12px' }}
+            onClick={() => setInstructionTarget(null)}
+            disabled={startingAttempt}
+          >
+            Cancel
+          </button>
           <button
             type="button"
             className="btn-pri"
-            style={{ flex:2 }}
-            onClick={() => {
-              setJoinTarget(instructionTarget)
-              setInstructionTarget(null)
-            }}
+            style={{ flex: 2, padding: '12px', fontSize: 15, fontWeight: 900 }}
+            onClick={handleStartAttemptNow}
+            disabled={startingAttempt}
           >
-            I Agree — Enter Room Code →
+            {startingAttempt ? 'Starting Test…' : 'Start Test Now →'}
           </button>
         </div>
       </div>
     </div>
   )
 
-  // ── Room-code join modal ────────────────────────────────────────────────────
-  const joinModal = joinTarget && (
-    <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.58)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:400 }}>
-      <form onSubmit={handleJoinSubmit} style={{ background:'#fff',borderRadius:20,padding:'2rem',maxWidth:360,width:'90%',boxShadow:'0 20px 60px rgba(0,0,0,.18)' }}>
-        <div style={{ fontSize:40, textAlign:'center', marginBottom:12 }}>🔑</div>
-        <h3 style={{ margin:'0 0 6px', fontSize:19, fontWeight:800, textAlign:'center' }}>Enter room code</h3>
-        <p style={{ color:'#6b7280', fontSize:13, textAlign:'center', margin:'0 0 18px' }}>
-          Ask your admin for the code to join "{joinTarget.title}"
-        </p>
-        <input
-          autoFocus
-          value={roomCode}
-          onChange={e => setRoomCode(e.target.value.toUpperCase())}
-          placeholder="e.g. 482913"
-          maxLength={6}
-          style={{ width:'100%', boxSizing:'border-box', padding:'12px 14px', fontSize:22, fontWeight:800, letterSpacing:'.2em', textAlign:'center', borderRadius:12, border:'1.5px solid #d1d5db', marginBottom:12 }}
-        />
-        {joinError && (
-          <p style={{ color:'#dc2626', fontSize:13, textAlign:'center', margin:'0 0 12px' }}>⚠ {joinError}</p>
-        )}
-        <div style={{ display:'flex', gap:9, marginTop:6 }}>
-          <button type="button" className="btn-sec" style={{ flex:1 }} onClick={handleJoinCancel} disabled={joining}>Cancel</button>
-          <button type="submit" className="btn-pri" style={{ flex:1 }} disabled={joining}>
-            {joining ? 'Joining…' : 'Join room'}
-          </button>
-        </div>
-      </form>
-    </div>
-  )
-
-  // ── Waiting room ────────────────────────────────────────────────────────────
+  // Waiting room if needed
   if (screen === 'quiz' && inWaiting && session && activeQuiz) return (
     <WaitingRoom
       session={session}
       quiz={activeQuiz}
       userRole="student"
-      onQuizStart={handleQuizStart}
-      onLeave={handleLeaveRoom}
+      onQuizStart={() => setInWaiting(false)}
+      onLeave={() => { setInWaiting(false); setSession(null); setScreen('home') }}
       connected={room.connected}
       participants={room.participants}
       quizStarted={room.quizStarted}
@@ -364,10 +399,14 @@ export default function StudentPage({
         onHistory={() => setScreen('history')}
         onAnalytics={quiz => { setAnalyticsQuiz(quiz); setScreen('analytics') }}
         onLogout={onLogout}
+        attempts={attempts}
         histCount={attempts.length}
+        onViewAttempt={a => { setViewingAttempt(a); setScreen('historyDetail') }}
       />
       {instructionModal}
-      {joinModal}
+      {celebrationResult && (
+        <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
+      )}
     </>
   )
 
@@ -379,7 +418,12 @@ export default function StudentPage({
   )
 
   if (screen === 'quiz' && activeQuiz) return (
-    <QuizAttempt quiz={activeQuiz} userName={user?.name} onSubmit={handleSubmit} />
+    <>
+      <QuizAttempt quiz={activeQuiz} userName={user?.name} onSubmit={handleSubmit} />
+      {celebrationResult && (
+        <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
+      )}
+    </>
   )
 
   if (screen === 'results' && activeQuiz && currentResult) return (
@@ -420,12 +464,22 @@ export default function StudentPage({
         answers: viewingAttempt.answers,
         score: viewingAttempt.score,
         total_marks: viewingAttempt.total_marks,
+        totalMarks: viewingAttempt.total_marks,
+        accuracy: viewingAttempt.accuracy,
+        correct_count: viewingAttempt.correct_count,
+        incorrect_count: viewingAttempt.incorrect_count,
+        skipped_count: viewingAttempt.skipped_count,
+        marked_count: viewingAttempt.marked_count,
+        attempted_count: viewingAttempt.attempted_count,
+        rank: viewingAttempt.rank,
+        total_participants: viewingAttempt.total_participants,
         auto: viewingAttempt.auto,
         sectionBreakdown: viewingAttempt.sectionBreakdown,
         totalTimeSpent: viewingAttempt.totalTimeSpent || viewingAttempt.time_taken_sec || 0,
         questionTimes: viewingAttempt.questionTimes || {},
         solution_pdf: viewingAttempt.solution_pdf,
         solution_pdf_name: viewingAttempt.solution_pdf_name,
+        questions: viewingAttempt.questions || [],
       }}
       onBack={() => setScreen('history')}
       onHome={() => setScreen('home')}

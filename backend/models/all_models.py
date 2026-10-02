@@ -111,6 +111,8 @@ class Quiz(Base):
     instructions   : Mapped[str|None]   = mapped_column(Text, nullable=True)
     solution_pdf   : Mapped[str|None]   = mapped_column(Text, nullable=True)     # base64 data URL or path
     solution_pdf_name: Mapped[str|None] = mapped_column(String(255), nullable=True) # original filename
+    availability_start: Mapped[datetime|None] = mapped_column(DateTime(timezone=True), nullable=True)
+    availability_end  : Mapped[datetime|None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -144,6 +146,9 @@ class Question(Base):
     marks          : Mapped[float]        = mapped_column(Float, default=1.0, nullable=False)
     positive_marks : Mapped[float]        = mapped_column(Float, default=1.0, nullable=False)
     negative_marks : Mapped[float]        = mapped_column(Float, default=0.0, nullable=False)
+    question_type  : Mapped[str]          = mapped_column(String(50), default="single_correct", nullable=False)
+    raw_answer     : Mapped[str|None]     = mapped_column(String(255), nullable=True)
+    match_data     : Mapped[str|None]     = mapped_column(Text, nullable=True)   # JSON string storing structured columns: { column_1, column_2 }
     diagram        : Mapped[str|None]     = mapped_column(Text, nullable=True)   # attached diagram path OR base64 data URL
     created_at     : Mapped[datetime]     = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     : Mapped[datetime]     = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
@@ -219,6 +224,11 @@ class Attempt(Base):
     student_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     score          : Mapped[float]         = mapped_column(Float, default=0.0, nullable=False)
     total_marks    : Mapped[float]         = mapped_column(Float, default=0.0, nullable=False)
+    accuracy       : Mapped[float]         = mapped_column(Float, default=0.0, nullable=False)
+    correct_count  : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    incorrect_count: Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    skipped_count  : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    marked_count   : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
     status         : Mapped[AttemptStatus] = mapped_column(String(20), default=AttemptStatus.in_progress.value)
     started_at     : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     submitted_at   : Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
@@ -248,6 +258,8 @@ class Answer(Base):
     attempt_id      : Mapped[str]      = mapped_column(String(36), ForeignKey("attempts.id", ondelete="CASCADE"), nullable=False, index=True)
     question_id     : Mapped[str]      = mapped_column(String(36), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
     selected_option : Mapped[int|None] = mapped_column(Integer, nullable=True)    # None = skipped
+    response_text   : Mapped[str|None] = mapped_column(String(500), nullable=True)
+    marked_for_review: Mapped[bool]    = mapped_column(Boolean, default=False, nullable=False)
     is_correct      : Mapped[bool]     = mapped_column(Boolean, default=False, nullable=False)
     marks_awarded   : Mapped[float]    = mapped_column(Float, default=0.0, nullable=False)
     time_taken_sec  : Mapped[int]      = mapped_column(Integer, default=0, nullable=False)

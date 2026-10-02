@@ -69,6 +69,8 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
     instructions:      frontendQuiz.instructions || null,
     solution_pdf:      frontendQuiz.solution_pdf || null,
     solution_pdf_name: frontendQuiz.solution_pdf_name || null,
+    availability_start: frontendQuiz.availability_start || null,
+    availability_end:   frontendQuiz.availability_end || null,
     time_per_q_sec:    (timePerQMin || 5) * 60,
     is_public:         false,
     tags:              Array.isArray(frontendQuiz.tags) ? frontendQuiz.tags : (typeof frontendQuiz.tags === 'string' && frontendQuiz.tags.trim() ? frontendQuiz.tags.split(',').map(t => t.trim()) : null),
@@ -77,25 +79,32 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
     questions: (frontendQuiz.questions || []).map((q, i) => {
       const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : (q.marks !== undefined ? Number(q.marks) : 1)
       const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      const qImg = q.question_image || q.qImage || null
+      const corr = q.correct_answer !== undefined ? q.correct_answer : (q.correct ?? null)
       return {
         order_index:    i,
         section:        q.section || 'General',
         text:           q.text || '',
-        question_image: q.qImage || null,
-        content_type:   q.qImage ? (q.text ? 'both' : 'image') : 'text',
-        correct_answer: q.correct ?? null,
-        explanation:    q.explanation || null,
+        question_image: qImg,
+        content_type:   qImg ? (q.text ? 'both' : 'image') : 'text',
+        correct_answer: corr,
+        raw_answer:     q.raw_answer || null,
+        question_type:  q.question_type || 'single_correct',
+        match_data:     q.match_data || null,
+        explanation:    q.explanation || (q.source_page ? `PDF Page ${q.source_page}` : null),
         marks:          pos,
         positive_marks: pos,
         negative_marks: neg,
         diagram:        q.diagram || null,
         options: (q.options || []).map((opt, j) => {
           const isImg = opt && typeof opt === 'object' && opt.type === 'image'
+          const optText = isImg ? '' : (typeof opt === 'string' ? opt : (opt?.text || ''))
+          const optImg = isImg ? opt.src : (opt?.image || null)
           return {
             order_index:  j,
-            text:         isImg ? '' : (opt || ''),
-            image:        isImg ? opt.src : null,
-            content_type: isImg ? 'image' : 'text',
+            text:         optText,
+            image:        optImg,
+            content_type: (isImg || optImg) ? 'image' : 'text',
           }
         }),
       }
@@ -113,6 +122,8 @@ export function fromApiFormat(apiQuiz) {
     solution_pdf:      apiQuiz.solution_pdf,
     solution_pdf_name: apiQuiz.solution_pdf_name,
     has_solution_pdf:  Boolean(apiQuiz.solution_pdf),
+    availability_start: apiQuiz.availability_start,
+    availability_end:   apiQuiz.availability_end,
     published:         apiQuiz.status === 'published',
     timePerQ:          apiQuiz.time_per_q_sec,
     createdAt:         apiQuiz.created_at,
@@ -127,6 +138,9 @@ export function fromApiFormat(apiQuiz) {
       positive_marks: q.positive_marks !== undefined ? q.positive_marks : (q.marks || 1),
       negative_marks: q.negative_marks !== undefined ? q.negative_marks : 0,
       diagram:        q.diagram,
+      question_type:  q.question_type || 'single_correct',
+      raw_answer:     q.raw_answer || null,
+      match_data:     q.match_data || null,
       options: (q.options || [])
         .sort((a, b) => a.order_index - b.order_index)
         .map(opt =>
@@ -137,3 +151,80 @@ export function fromApiFormat(apiQuiz) {
     })),
   }
 }
+
+// ── Bulk Import API ──────────────────────────────────────────────────────────
+
+export async function analyzePdfForImport(file, { defaultPosMarks = 4, defaultNegMarks = 1, defaultSection = 'General' } = {}) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('default_pos_marks', defaultPosMarks)
+  formData.append('default_neg_marks', defaultNegMarks)
+  formData.append('default_section', defaultSection)
+
+  const { data } = await api.post('/quizzes/import/analyze-pdf', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000, // 2 minutes for processing large PDFs
+  })
+  return data
+}
+
+export async function confirmBulkImport(quizId, questions) {
+  const payload = {
+    questions: questions.map((q, i) => {
+      const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : 4
+      const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      return {
+        order_index: i,
+        section: q.section || 'General',
+        text: q.text || '',
+        question_image: q.question_image || q.qImage || null,
+        content_type: (q.question_image || q.qImage) ? (q.text ? 'both' : 'image') : 'text',
+        correct_answer: q.correct_answer ?? q.correct ?? null,
+        raw_answer: q.raw_answer || null,
+        question_type: q.question_type || 'single_correct',
+        match_data: q.match_data || null,
+        explanation: q.explanation || (q.source_page ? `PDF Page ${q.source_page}` : null),
+        marks: pos,
+        positive_marks: pos,
+        negative_marks: neg,
+        diagram: q.diagram || null,
+        options: (q.options || []).map((opt, j) => {
+          const isImg = opt && typeof opt === 'object' && opt.type === 'image'
+          return {
+            order_index: j,
+            text: isImg ? '' : (typeof opt === 'string' ? opt : (opt.text || '')),
+            image: isImg ? opt.src : (opt.image || null),
+            content_type: (isImg || opt.image) ? 'image' : 'text',
+          }
+        }),
+      }
+    }),
+  }
+  const { data } = await api.post(`/quizzes/${quizId}/import/confirm`, payload)
+  return data
+}
+
+export async function startQuizAttempt(quizId) {
+  const { data } = await api.post(`/quizzes/${quizId}/start-attempt`)
+  return data
+}
+
+export async function updateQuizAvailability(quizId, startOrObj, maybeEnd) {
+  let availability_start = null
+  let availability_end = null
+  if (typeof startOrObj === 'object' && startOrObj !== null) {
+    availability_start = startOrObj.availability_start
+    availability_end = startOrObj.availability_end
+  } else {
+    availability_start = startOrObj
+    availability_end = maybeEnd
+  }
+  const { data } = await api.patch(`/quizzes/${quizId}/availability`, {
+    availability_start,
+    availability_end,
+  })
+  return data
+}
+
+
+
