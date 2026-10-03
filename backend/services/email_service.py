@@ -1,18 +1,37 @@
 import asyncio
 import smtplib
 import ssl
+import socket
+from typing import Tuple
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from database.config import settings
 
-def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str) -> bool:
-    """Synchronous SMTP email sender."""
+
+def _mask_email(email: str) -> str:
+    """Mask email for privacy in logs, e.g. user@example.com -> u***r@example.com"""
+    if not email or "@" not in email:
+        return "***"
+    local, domain = email.split("@", 1)
+    if len(local) <= 2:
+        masked_local = local[0] + "***"
+    else:
+        masked_local = local[0] + "***" + local[-1]
+    return f"{masked_local}@{domain}"
+
+
+def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str) -> Tuple[bool, str]:
+    """
+    Synchronous SMTP email sender.
+    Returns (success: bool, error_description: str).
+    Never logs or leaks credentials.
+    """
     if not settings.smtp_host:
-        return False
+        return False, "SMTP_HOST is not configured"
 
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = settings.smtp_from_email
+    msg["From"] = settings.smtp_from_email or "noreply@quizee.com"
     msg["To"] = to_email
 
     part1 = MIMEText(text_body, "plain", "utf-8")
@@ -20,25 +39,42 @@ def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str)
     msg.attach(part1)
     msg.attach(part2)
 
+    timeout = 15
+    masked = _mask_email(to_email)
     try:
         if settings.smtp_port == 465:
             context = ssl.create_default_context()
-            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=15) as server:
+            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=timeout) as server:
                 if settings.smtp_username and settings.smtp_password:
                     server.login(settings.smtp_username, settings.smtp_password)
-                server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())
+                server.sendmail(msg["From"], [to_email], msg.as_string())
         else:
-            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=timeout) as server:
+                server.ehlo()
                 if settings.smtp_use_tls:
                     context = ssl.create_default_context()
                     server.starttls(context=context)
+                    server.ehlo()
                 if settings.smtp_username and settings.smtp_password:
                     server.login(settings.smtp_username, settings.smtp_password)
-                server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())
-        return True
+                server.sendmail(msg["From"], [to_email], msg.as_string())
+        return True, ""
+    except smtplib.SMTPAuthenticationError as exc:
+        err = f"SMTP Authentication failed (code {exc.smtp_code}). Verify SMTP_USERNAME and Google App Password."
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except smtplib.SMTPConnectError as exc:
+        err = f"SMTP Connection failed to {settings.smtp_host}:{settings.smtp_port}."
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except (socket.timeout, TimeoutError):
+        err = f"SMTP Connection timed out after {timeout}s connecting to {settings.smtp_host}:{settings.smtp_port}."
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
     except Exception as exc:
-        print(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {exc}")
-        return False
+        err = f"SMTP delivery error: {type(exc).__name__} - {exc}"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
 
 
 async def send_otp_email(to_email: str, name: str, otp: str, role: str) -> bool:
@@ -101,13 +137,29 @@ If you did not request this, you can safely ignore this email.
 </html>
 """
 
+    masked = _mask_email(to_email)
+
+    if settings.is_production:
+        if not settings.smtp_host:
+            print(f"[EMAIL SERVICE ERROR] Production mode is active but SMTP_HOST is not configured. Delivery aborted for {masked}.")
+            return False
+
+        success, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
+        if success:
+            print(f"[EMAIL SERVICE] Successfully delivered OTP email to {masked} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
+            return True
+        else:
+            print(f"[EMAIL SERVICE ERROR] Failed to deliver OTP email to {masked}. SMTP Error: {err}")
+            return False
+
+    # ── Non-Production / Local Development Fallback ──────────────────────────
     if settings.smtp_host:
-        sent = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
-        if sent:
+        success, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
+        if success:
             print(f"[EMAIL SERVICE] Successfully sent OTP email to {to_email} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
             return True
+        print(f"[EMAIL SERVICE] Local SMTP delivery attempt failed ({err}), falling back to console mock.")
 
-    # Development / Fallback mode: Print to console
     print(f"\n{'='*70}")
     print(f"[QUIZEE EMAIL SERVICE - DEVELOPMENT MODE]")
     print(f"To: {to_email} ({name or role_label})")
