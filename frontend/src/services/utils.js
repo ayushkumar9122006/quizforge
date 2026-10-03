@@ -3,17 +3,33 @@ export function uid() {
 }
 
 export function formatTime(s) {
-  return `${Math.floor(s/60).toString().padStart(2,'0')}:${(s%60).toString().padStart(2,'0')}`
+  const val = Number(s) || 0
+  if (val <= 0) return '00:00'
+  const rounded = Math.round(val)
+  const totalSecs = (rounded === 0 && val > 0) ? 1 : Math.max(0, rounded)
+  const mins = Math.floor(totalSecs / 60)
+  const secs = totalSecs % 60
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
 export function formatDuration(seconds) {
-  const s = Math.max(0, Math.round(seconds || 0))
+  const val = Number(seconds) || 0
+  if (val <= 0) return '0 sec'
+  const rounded = Math.round(val)
+  const s = (rounded === 0 && val > 0) ? 1 : Math.max(0, rounded)
   const mins = Math.floor(s / 60)
   const secs = s % 60
   if (mins === 0) {
     return `${secs} sec`
   }
   return `${mins} min ${secs.toString().padStart(2, '0')} sec`
+}
+
+export function formatRemainingSeconds(seconds) {
+  const val = Number(seconds)
+  if (isNaN(val) || val <= 0) return '0'
+  const rounded = Math.round(val)
+  return String(Math.max(0, rounded))
 }
 
 export function cropImage(imgDataUrl, cropPct) {

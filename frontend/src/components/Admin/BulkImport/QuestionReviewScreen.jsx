@@ -1,4 +1,29 @@
-import { useState } from 'react'
+import React, { useState } from 'react'
+
+function parseToISTIso(val) {
+  if (!val) return null
+  try {
+    return new Date(`${val}:00+05:30`).toISOString()
+  } catch {
+    return null
+  }
+}
+
+function toLocalInput(dateStr) {
+  if (!dateStr) return ''
+  try {
+    const d = new Date(dateStr)
+    const pad = n => String(n).padStart(2, '0')
+    const year = d.getFullYear()
+    const month = pad(d.getMonth() + 1)
+    const day = pad(d.getDate())
+    const hours = pad(d.getHours())
+    const minutes = pad(d.getMinutes())
+    return `${year}-${month}-${day}T${hours}:${minutes}`
+  } catch {
+    return ''
+  }
+}
 
 export default function QuestionReviewScreen({
   analysisData,
@@ -10,19 +35,64 @@ export default function QuestionReviewScreen({
   importing = false,
   isSubmitting = false,
 }) {
+  const initialSections = (analysisData?.configuredSections && Array.isArray(analysisData.configuredSections) && analysisData.configuredSections.length > 0)
+    ? [...analysisData.configuredSections]
+    : ['Section A', 'Section B', 'Section C', 'Section D']
+
+  const [sections, setSections] = useState(initialSections)
+  const [newSecInput, setNewSecInput] = useState('')
+  const [sectionFilter, setSectionFilter] = useState('all')
+
+  const [quizTitle, setQuizTitle] = useState(
+    analysisData?.title ||
+    metadata?.title ||
+    (analysisData?.filename ? analysisData.filename.replace(/\.pdf$/i, '').replace(/_/g, ' ') : 'Imported Quiz')
+  )
+  const [timePerQ, setTimePerQ] = useState(
+    analysisData?.timePerQMin ||
+    (analysisData?.timePerQ ? Math.round(analysisData.timePerQ / 60) : 5)
+  )
+
+  const [instructions, setInstructions] = useState(
+    analysisData?.customInstructions ||
+    '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'
+  )
+  const [enableWindow, setEnableWindow] = useState(
+    Boolean(analysisData?.enableWindow || analysisData?.availabilityStart || analysisData?.availabilityEnd)
+  )
+  const [availStart, setAvailStart] = useState(
+    analysisData?.rawAvailStart || toLocalInput(analysisData?.availabilityStart) || ''
+  )
+  const [availEnd, setAvailEnd] = useState(
+    analysisData?.rawAvailEnd || toLocalInput(analysisData?.availabilityEnd) || ''
+  )
+
+  const [solutionPdf, setSolutionPdf] = useState(analysisData?.solutionPdf || null)
+  const [solutionPdfName, setSolutionPdfName] = useState(analysisData?.solutionPdfName || '')
+  const [pdfUploading, setPdfUploading] = useState(false)
+
+  const [showConfig, setShowConfig] = useState(true)
+
   const rawQuestions = extractedQuestions || analysisData?.questions || []
   const [questions, setQuestions] = useState(
-    rawQuestions.map((q) => ({
-      ...q,
-      approved: q.approved !== undefined ? q.approved : !q.needs_review, // Default approved if passed validation
-    }))
+    rawQuestions.map((q, i) => {
+      const qNum = q.question_number !== undefined ? q.question_number : (i + 1)
+      const assignedSec = (q.section && initialSections.includes(q.section))
+        ? q.section
+        : (initialSections && initialSections[0]) || 'Section A'
+      return {
+        ...q,
+        question_number: qNum,
+        section: assignedSec,
+        approved: q.approved !== undefined ? q.approved : !q.needs_review,
+      }
+    })
   )
   const isImporting = importing || isSubmitting
   const fileName = metadata?.filename || analysisData?.filename || 'Uploaded PDF'
 
   const [filter, setFilter] = useState('all') // 'all' | 'ready' | 'needs_review'
   const [lightboxImg, setLightboxImg] = useState(null)
-  const [activeTabQIndex, setActiveTabQIndex] = useState(0)
 
   const totalCount = questions.length
   const readyCount = questions.filter((q) => !q.needs_review).length
@@ -30,10 +100,42 @@ export default function QuestionReviewScreen({
   const approvedCount = questions.filter((q) => q.approved).length
 
   const filteredQuestions = questions.filter((q) => {
-    if (filter === 'ready') return !q.needs_review
-    if (filter === 'needs_review') return q.needs_review
+    if (filter === 'ready' && q.needs_review) return false
+    if (filter === 'needs_review' && !q.needs_review) return false
+    if (sectionFilter !== 'all' && q.section !== sectionFilter) return false
     return true
   })
+
+  // ── Solution PDF upload handler ───────────────────────────────────────────
+  const handleSolutionPdfUpload = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please upload a valid PDF file.')
+      return
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      alert('Solution PDF size must be under 25MB.')
+      return
+    }
+    setPdfUploading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      setSolutionPdf(reader.result)
+      setSolutionPdfName(file.name)
+      setPdfUploading(false)
+    }
+    reader.onerror = () => {
+      alert('Failed to read PDF file.')
+      setPdfUploading(false)
+    }
+    reader.readAsDataURL(file)
+  }
+
+  const removeSolutionPdf = () => {
+    setSolutionPdf(null)
+    setSolutionPdfName('')
+  }
 
   // ── Helpers to update individual questions ──────────────────────────────────
   const updateQuestion = (qNum, field, val) => {
@@ -69,14 +171,82 @@ export default function QuestionReviewScreen({
     )
   }
 
+  const addSection = () => {
+    const trimmed = newSecInput.trim()
+    if (!trimmed) return
+    if (!sections.includes(trimmed)) {
+      setSections(prev => [...prev, trimmed])
+    }
+    setNewSecInput('')
+  }
+
+  const removeSection = (secName) => {
+    if (sections.length <= 1) {
+      alert('You must have at least one section configured.')
+      return
+    }
+    const fallbackSec = sections.find(s => s !== secName)
+    if (!window.confirm(`Delete section "${secName}"? Questions assigned to "${secName}" will be reassigned to "${fallbackSec}".`)) {
+      return
+    }
+    setSections(prev => prev.filter(s => s !== secName))
+    setQuestions(prev => prev.map(q => q.section === secName ? { ...q, section: fallbackSec } : q))
+    if (sectionFilter === secName) setSectionFilter('all')
+  }
+
   const handleFinalSubmit = () => {
     const approvedList = questions.filter((q) => q.approved)
     if (approvedList.length === 0) {
       alert('Please approve at least 1 question to import.')
       return
     }
+
+    const missingSec = approvedList.some(q => !q.section || !q.section.trim())
+    if (missingSec) {
+      alert('Please ensure every approved question has a valid section assigned.')
+      return
+    }
+
+    // Ensure all approved questions are strictly mapped to admin-configured sections
+    // and sorted by the admin's configured section order
+    const sectionOrderMap = {}
+    sections.forEach((s, idx) => { sectionOrderMap[s] = idx })
+
+    const sortedApprovedList = [...approvedList].map(q => ({
+      ...q,
+      section: (q.section && sections.includes(q.section)) ? q.section : (sections[0] || 'Section A'),
+    })).sort((a, b) => {
+      const rankA = sectionOrderMap[a.section] !== undefined ? sectionOrderMap[a.section] : 999
+      const rankB = sectionOrderMap[b.section] !== undefined ? sectionOrderMap[b.section] : 999
+      if (rankA !== rankB) return rankA - rankB
+      return (a.question_number || 0) - (b.question_number || 0)
+    })
+
+    let startIso = null
+    let endIso = null
+    if (enableWindow) {
+      startIso = parseToISTIso(availStart)
+      endIso = parseToISTIso(availEnd)
+      if (startIso && endIso && new Date(startIso) >= new Date(endIso)) {
+        alert('Availability End Time must be strictly after Availability Start Time.')
+        return
+      }
+    }
+
+    const extraConfig = {
+      title: quizTitle.trim() || 'Imported Quiz',
+      timePerQ: Number(timePerQ) || 5,
+      timePerQMin: Number(timePerQ) || 5,
+      instructions,
+      solution_pdf: solutionPdf,
+      solution_pdf_name: solutionPdfName,
+      availability_start: startIso,
+      availability_end: endIso,
+      sections,
+    }
+
     const fn = onConfirmImport || onConfirm
-    if (fn) fn(approvedList)
+    if (fn) fn(sortedApprovedList, extraConfig)
   }
 
   return (
@@ -170,7 +340,7 @@ export default function QuestionReviewScreen({
       </div>
 
       {/* Batch Control Toolbar */}
-      <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '12px 18px', marginBottom: 22, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
+      <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '12px 18px', marginBottom: 16, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
           <span style={{ fontSize: 13, fontWeight: 700, color: '#374151' }}>
             Quick Selection:
@@ -208,6 +378,269 @@ export default function QuestionReviewScreen({
             })}
           </div>
         </div>
+      </div>
+
+      {/* ── Section Assignment & Breakdown Bar ── */}
+      <div style={{ background: '#fdf4ff', borderRadius: 14, border: '1.5px solid #f0abfc', padding: '14px 18px', marginBottom: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 16 }}>📑</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#701a75' }}>
+              Section Allocation & Question Counts
+            </span>
+            <span style={{ fontSize: 11, background: '#fae8ff', color: '#86198f', padding: '2px 7px', borderRadius: 10, fontWeight: 700 }}>
+              {sections.length} active sections
+            </span>
+          </div>
+
+          {/* Quick add section */}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              className="inp"
+              placeholder="+ New section name"
+              value={newSecInput}
+              onChange={e => setNewSecInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSection() } }}
+              style={{ fontSize: 12, padding: '4px 8px', width: 170 }}
+            />
+            <button
+              type="button"
+              onClick={addSection}
+              disabled={!newSecInput.trim()}
+              className="btn-sec"
+              style={{ fontSize: 12, padding: '4px 10px', fontWeight: 700, color: '#a21caf', borderColor: '#f0abfc' }}
+            >
+              Add
+            </button>
+          </div>
+        </div>
+
+        {/* Section Pills with Question Counts & Filter */}
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <button
+            onClick={() => setSectionFilter('all')}
+            style={{
+              padding: '5px 12px',
+              borderRadius: 8,
+              border: `1.5px solid ${sectionFilter === 'all' ? '#a21caf' : '#e9d5ff'}`,
+              background: sectionFilter === 'all' ? '#a21caf' : '#fff',
+              color: sectionFilter === 'all' ? '#fff' : '#701a75',
+              fontSize: 12,
+              fontWeight: 800,
+              cursor: 'pointer'
+            }}
+          >
+            All Sections ({questions.length})
+          </button>
+          {sections.map(sec => {
+            const count = questions.filter(q => q.section === sec).length
+            const isSelected = sectionFilter === sec
+            return (
+              <div
+                key={sec}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  border: `1.5px solid ${isSelected ? '#9333ea' : '#e9d5ff'}`,
+                  background: isSelected ? '#ede9fe' : '#fff',
+                  cursor: 'pointer'
+                }}
+                onClick={() => setSectionFilter(sec)}
+              >
+                <span style={{ fontSize: 12, fontWeight: 800, color: isSelected ? '#581c87' : '#7e22ce' }}>
+                  {sec}
+                </span>
+                <span style={{ fontSize: 11, fontWeight: 700, background: '#f5d0fe', color: '#701a75', padding: '1px 6px', borderRadius: 10 }}>
+                  {count} Qs
+                </span>
+                {sections.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); removeSection(sec) }}
+                    title={`Delete section ${sec}`}
+                    style={{ background: 'none', border: 'none', color: '#c084fc', cursor: 'pointer', padding: 0, fontWeight: 800, fontSize: 13, lineHeight: 1 }}
+                  >
+                    ×
+                  </button>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* ── Test Configuration: Title, Timing, Instructions, Availability Window & Solution PDF ── */}
+      <div style={{ background: '#fff', borderRadius: 14, border: '1px solid #e5e7eb', padding: '14px 18px', marginBottom: 20 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showConfig ? 12 : 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }} onClick={() => setShowConfig(!showConfig)}>
+            <span style={{ fontSize: 15 }}>⚙️</span>
+            <span style={{ fontSize: 13, fontWeight: 800, color: '#1e293b' }}>
+              Quiz Settings & Guidelines (Title, Timing, Instructions, Availability & Solution PDF)
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setShowConfig(!showConfig)}
+            style={{ fontSize: 12, color: '#6366f1', background: 'none', border: 'none', cursor: 'pointer', fontWeight: 700 }}
+          >
+            {showConfig ? '▲ Collapse' : '▼ Expand'}
+          </button>
+        </div>
+
+        {showConfig && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16 }}>
+            {/* Title & Timing */}
+            <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: 10, border: '1px solid #e2e8f0', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
+                  📋 Quiz Title
+                </label>
+                <input
+                  type="text"
+                  className="inp"
+                  value={quizTitle}
+                  onChange={e => setQuizTitle(e.target.value)}
+                  placeholder="e.g. JEE Main Chemistry Mock 2026"
+                  style={{ width: '100%', fontSize: 13, boxSizing: 'border-box' }}
+                />
+              </div>
+
+              <div>
+                <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
+                  ⏱️ Minutes per Question
+                </label>
+                <input
+                  type="number"
+                  min="1"
+                  max="60"
+                  className="inp"
+                  value={timePerQ}
+                  onChange={e => setTimePerQ(Math.max(1, parseInt(e.target.value) || 1))}
+                  style={{ width: '100%', fontSize: 13, boxSizing: 'border-box' }}
+                />
+                <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginTop: 3 }}>
+                  Total Test Duration: ~{timePerQ * questions.length} minutes ({timePerQ} min × {questions.length} questions)
+                </span>
+              </div>
+
+              {/* Solution PDF */}
+              <div style={{ borderTop: '1px dashed #cbd5e1', paddingTop: 8 }}>
+                <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
+                  📑 Official Solution PDF (Optional)
+                </label>
+                {solutionPdf ? (
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#ecfdf5', padding: '6px 10px', borderRadius: 8, border: '1px solid #a7f3d0' }}>
+                    <span style={{ fontSize: 12, fontWeight: 700, color: '#065f46', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>
+                      ✓ {solutionPdfName || 'Solution Attached'}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={removeSolutionPdf}
+                      style={{ background: 'none', border: 'none', color: '#ef4444', fontWeight: 800, fontSize: 11, cursor: 'pointer' }}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ) : (
+                  <div>
+                    <input
+                      type="file"
+                      id="bulk-solution-pdf"
+                      accept="application/pdf"
+                      onChange={handleSolutionPdfUpload}
+                      style={{ display: 'none' }}
+                      disabled={pdfUploading}
+                    />
+                    <label
+                      htmlFor="bulk-solution-pdf"
+                      style={{
+                        display: 'inline-block',
+                        padding: '5px 10px',
+                        background: '#fff',
+                        border: '1px dashed #94a3b8',
+                        borderRadius: 6,
+                        cursor: 'pointer',
+                        fontSize: 12,
+                        fontWeight: 700,
+                        color: '#475569'
+                      }}
+                    >
+                      {pdfUploading ? 'Reading PDF…' : '+ Attach Solution PDF'}
+                    </label>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Test Instructions Editor */}
+            <div style={{ background: '#f8fafc', padding: '12px 14px', borderRadius: 10, border: '1px solid #e2e8f0' }}>
+              <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
+                📝 Test Instructions (Shown on Student Pre-Test Screen)
+              </label>
+              <textarea
+                className="inp"
+                rows={5}
+                value={instructions}
+                onChange={e => setInstructions(e.target.value)}
+                placeholder="Enter rules, marking instructions, notes..."
+                style={{ width: '100%', fontSize: 12, lineHeight: 1.5, boxSizing: 'border-box' }}
+              />
+              <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginTop: 4 }}>
+                Instructions will be shown to students before they click "Start Test Now".
+              </span>
+            </div>
+
+            {/* Test Availability Window */}
+            <div style={{ background: '#fafbff', padding: '12px 14px', borderRadius: 10, border: '1.5px solid #c7d2fe' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                <div>
+                  <label style={{ margin: 0, color: '#312e81', fontSize: 12, fontWeight: 800 }}>
+                    🕒 Test Availability Window
+                  </label>
+                  <div style={{ fontSize: 11, color: '#6366f1', marginTop: 1 }}>
+                    Default Time Zone: <strong>Asia/Kolkata (IST)</strong>
+                  </div>
+                </div>
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: '#475569', cursor: 'pointer' }}>
+                  <input type="checkbox" checked={enableWindow} onChange={e => setEnableWindow(e.target.checked)} />
+                  Enforce Window
+                </label>
+              </div>
+
+              {enableWindow ? (
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                  <div>
+                    <label style={{ fontSize: 11, color: '#475569', display: 'block', marginBottom: 3, fontWeight: 600 }}>Available From (IST)</label>
+                    <input
+                      type="datetime-local"
+                      className="inp"
+                      value={availStart}
+                      onChange={e => setAvailStart(e.target.value)}
+                      style={{ width: '100%', fontSize: 11, padding: '5px 7px' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 11, color: '#475569', display: 'block', marginBottom: 3, fontWeight: 600 }}>Available Until (IST)</label>
+                    <input
+                      type="datetime-local"
+                      className="inp"
+                      value={availEnd}
+                      onChange={e => setAvailEnd(e.target.value)}
+                      style={{ width: '100%', fontSize: 11, padding: '5px 7px' }}
+                    />
+                  </div>
+                </div>
+              ) : (
+                <p style={{ fontSize: 11, color: '#6b7280', margin: '4px 0 0' }}>
+                  Availability window is currently disabled (Always Available). Check "Enforce Window" to restrict test access to a specific IST timeframe.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Questions List (Side-by-Side Cards) */}
@@ -248,6 +681,12 @@ export default function QuestionReviewScreen({
             ? '☑️ Multi-Correct MCQ'
             : '🔘 Single Correct MCQ'
 
+          const curSec = (q.section && sections.includes(q.section)) ? q.section : (sections[0] || 'Section A')
+          const questionsInCurSec = questions.filter(x => ((x.section && sections.includes(x.section)) ? x.section : (sections[0] || 'Section A')) === curSec)
+          const qIndexInSec = questionsInCurSec.findIndex(x => x === q || x.question_number === q.question_number)
+          const qInSec = qIndexInSec >= 0 ? qIndexInSec + 1 : 1
+          const totInSec = questionsInCurSec.length
+
           return (
             <div
               key={q.question_number}
@@ -284,7 +723,11 @@ export default function QuestionReviewScreen({
                     Question #{q.question_number}
                   </label>
 
-                  <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 9px', borderRadius: 6, background: '#ede9fe', color: '#5b21b6' }}>
+                  <span style={{ fontSize: 12, fontWeight: 800, padding: '3px 9px', borderRadius: 6, background: '#ede9fe', color: '#5b21b6' }}>
+                    {curSec} · Q{qInSec}/{totInSec}
+                  </span>
+
+                  <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 9px', borderRadius: 6, background: '#f1f5f9', color: '#475569' }}>
                     {typeLabel}
                   </span>
 
@@ -541,16 +984,19 @@ export default function QuestionReviewScreen({
                       />
                     </div>
                     <div>
-                      <span style={{ fontSize: 11, fontWeight: 700, color: '#64748b', display: 'block', marginBottom: 3 }}>
-                        Section
+                      <span style={{ fontSize: 11, fontWeight: 800, color: '#6b21a8', display: 'block', marginBottom: 3 }}>
+                        Section Assignment
                       </span>
-                      <input
-                        type="text"
+                      <select
                         className="inp"
-                        value={q.section}
+                        value={sections.includes(q.section) ? q.section : (sections[0] || 'Section A')}
                         onChange={(e) => updateQuestion(q.question_number, 'section', e.target.value)}
-                        style={{ width: '100%', fontSize: 12, padding: '5px 8px' }}
-                      />
+                        style={{ width: '100%', fontSize: 12, padding: '5px 8px', fontWeight: 800, color: '#581c87', background: '#faf5ff', border: '1.5px solid #d8b4fe', borderRadius: 8, cursor: 'pointer' }}
+                      >
+                        {sections.map(s => (
+                          <option key={s} value={s}>{s}</option>
+                        ))}
+                      </select>
                     </div>
                   </div>
                 </div>

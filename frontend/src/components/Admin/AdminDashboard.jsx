@@ -218,20 +218,29 @@ export default function AdminDashboard({ onLogout }) {
     setScreen('bulk_review')
   }
 
-  const handleConfirmBulkImport = async (approvedQuestions) => {
+  const handleConfirmBulkImport = async (approvedQuestions, extraConfig = {}) => {
     setBulkImporting(true)
     try {
       let targetQuiz = null
       if (bulkTargetQuizId) {
         targetQuiz = await confirmBulkImport(bulkTargetQuizId, approvedQuestions)
       } else {
+        const timePerQMin = extraConfig?.timePerQMin || (extraConfig?.timePerQ ? (extraConfig.timePerQ > 30 ? Math.round(extraConfig.timePerQ / 60) : extraConfig.timePerQ) : (bulkAnalysisData?.timePerQMin || 5))
         const payload = toApiFormat({
-          title: bulkAnalysisData?.metadata?.title || 'Imported Quiz',
+          title: extraConfig?.title || bulkAnalysisData?.title || bulkAnalysisData?.metadata?.title || 'Imported Quiz',
           questions: approvedQuestions,
-          instructions: '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.',
-          solution_pdf: null,
-          solution_pdf_name: null,
-        })
+          instructions: extraConfig?.instructions !== undefined
+            ? extraConfig.instructions
+            : (bulkAnalysisData?.customInstructions || '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'),
+          solution_pdf: extraConfig?.solution_pdf || bulkAnalysisData?.solutionPdf || null,
+          solution_pdf_name: extraConfig?.solution_pdf_name || bulkAnalysisData?.solutionPdfName || null,
+          availability_start: extraConfig?.availability_start !== undefined
+            ? extraConfig.availability_start
+            : (bulkAnalysisData?.availabilityStart || null),
+          availability_end: extraConfig?.availability_end !== undefined
+            ? extraConfig.availability_end
+            : (bulkAnalysisData?.availabilityEnd || null),
+        }, timePerQMin)
         const newQuiz = await createQuiz(payload)
         await publishQuiz(newQuiz.id)
         targetQuiz = newQuiz
@@ -260,12 +269,20 @@ export default function AdminDashboard({ onLogout }) {
 
   if (screen === 'editor' && draftQ && draftMeta) return (
     <QuestionEditor
+      initQuestions={draftQ}
       questions={draftQ}
       meta={draftMeta}
+      quizTitle={draftMeta.title}
+      timePerQ={draftMeta.timePerQ}
+      instructions={draftMeta.instructions}
+      initSolutionPdf={draftMeta.solutionPdf}
+      initSolutionPdfName={draftMeta.solutionPdfName}
       saving={saving}
+      saveError={saveErr}
       saveErr={saveErr}
       onSave={handleSave}
       onBack={() => setScreen('config')}
+      onBulkImportClick={() => { setBulkTargetQuizId(null); setShowBulkModal(true) }}
       onImportClick={() => { setBulkTargetQuizId(null); setShowBulkModal(true) }}
     />
   )

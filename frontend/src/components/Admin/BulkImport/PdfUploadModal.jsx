@@ -3,9 +3,21 @@ import { analyzePdfForImport } from '../../../services/quizService.js'
 
 export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quizId = null }) {
   const [file, setFile] = useState(null)
+  const [quizTitle, setQuizTitle] = useState('')
+  const [timePerQ, setTimePerQ] = useState(5)
   const [posMarks, setPosMarks] = useState(4)
   const [negMarks, setNegMarks] = useState(1)
-  const [section, setSection] = useState('General')
+  const [sections, setSections] = useState(['Section A', 'Section B', 'Section C', 'Section D'])
+  const [newSecInput, setNewSecInput] = useState('')
+  const [instructions, setInstructions] = useState(
+    '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'
+  )
+  const [enableWindow, setEnableWindow] = useState(false)
+  const [availStart, setAvailStart] = useState('')
+  const [availEnd, setAvailEnd] = useState('')
+  const [solutionPdf, setSolutionPdf] = useState(null)
+  const [solutionPdfName, setSolutionPdfName] = useState('')
+  const [pdfUploading, setPdfUploading] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [progressStep, setProgressStep] = useState('')
   const [error, setError] = useState('')
@@ -15,6 +27,10 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
   useEffect(() => {
     if (!open) {
       setFile(null)
+      setQuizTitle('')
+      setTimePerQ(5)
+      setSolutionPdf(null)
+      setSolutionPdfName('')
       setError('')
       setAnalyzing(false)
       setProgressStep('')
@@ -23,12 +39,41 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
 
   if (!open) return null
 
+  const parseToISTIso = (val) => {
+    if (!val) return null
+    try {
+      return new Date(`${val}:00+05:30`).toISOString()
+    } catch {
+      return null
+    }
+  }
+
+  const addSection = () => {
+    const trimmed = newSecInput.trim()
+    if (!trimmed) return
+    if (!sections.includes(trimmed)) {
+      setSections([...sections, trimmed])
+    }
+    setNewSecInput('')
+  }
+
+  const removeSection = (name) => {
+    if (sections.length <= 1) {
+      alert('You must have at least one section configured.')
+      return
+    }
+    setSections(sections.filter(s => s !== name))
+  }
+
   const handleDrop = (e) => {
     e.preventDefault()
     setDragOver(false)
     const droppedFile = e.dataTransfer.files?.[0]
     if (droppedFile && droppedFile.name.toLowerCase().endsWith('.pdf')) {
       setFile(droppedFile)
+      if (!quizTitle) {
+        setQuizTitle(droppedFile.name.replace(/\.pdf$/i, '').replace(/_/g, ' '))
+      }
       setError('')
     } else {
       setError('Please select a valid PDF file.')
@@ -39,10 +84,43 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
     const selected = e.target.files?.[0]
     if (selected && selected.name.toLowerCase().endsWith('.pdf')) {
       setFile(selected)
+      if (!quizTitle) {
+        setQuizTitle(selected.name.replace(/\.pdf$/i, '').replace(/_/g, ' '))
+      }
       setError('')
     } else if (selected) {
       setError('Please select a valid PDF file.')
     }
+  }
+
+  const handleSolutionPdfUpload = (e) => {
+    const sFile = e.target.files?.[0]
+    if (!sFile) return
+    if (sFile.type !== 'application/pdf' && !sFile.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please upload a valid PDF file.')
+      return
+    }
+    if (sFile.size > 25 * 1024 * 1024) {
+      alert('Solution PDF size must be under 25MB.')
+      return
+    }
+    setPdfUploading(true)
+    const reader = new FileReader()
+    reader.onload = () => {
+      setSolutionPdf(reader.result)
+      setSolutionPdfName(sFile.name)
+      setPdfUploading(false)
+    }
+    reader.onerror = () => {
+      alert('Failed to read PDF file.')
+      setPdfUploading(false)
+    }
+    reader.readAsDataURL(sFile)
+  }
+
+  const removeSolutionPdf = () => {
+    setSolutionPdf(null)
+    setSolutionPdfName('')
   }
 
   const handleStartAnalysis = async () => {
@@ -50,6 +128,23 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       setError('Please select a PDF file.')
       return
     }
+
+    let startIso = null
+    let endIso = null
+    if (enableWindow) {
+      startIso = parseToISTIso(availStart)
+      endIso = parseToISTIso(availEnd)
+      if (startIso && endIso && new Date(startIso) >= new Date(endIso)) {
+        setError('Availability End Time must be strictly after Availability Start Time.')
+        return
+      }
+    }
+
+    if (sections.length === 0) {
+      setError('Please configure at least one section for question assignment.')
+      return
+    }
+
     setError('')
     setAnalyzing(true)
 
@@ -72,11 +167,25 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       const data = await analyzePdfForImport(file, {
         defaultPosMarks: Number(posMarks) || 4,
         defaultNegMarks: Number(negMarks) || 1,
-        defaultSection: section || 'General',
+        defaultSection: sections[0] || 'Section A',
       })
       clearInterval(interval)
       setAnalyzing(false)
-      onAnalysisComplete(data)
+      onAnalysisComplete({
+        ...data,
+        title: quizTitle.trim() || (file ? file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ') : 'Imported Quiz'),
+        timePerQMin: Number(timePerQ) || 5,
+        timePerQ: (Number(timePerQ) || 5) * 60,
+        solutionPdf,
+        solutionPdfName,
+        configuredSections: sections,
+        customInstructions: instructions,
+        availabilityStart: startIso,
+        availabilityEnd: endIso,
+        enableWindow,
+        rawAvailStart: availStart,
+        rawAvailEnd: availEnd,
+      })
     } catch (err) {
       clearInterval(interval)
       setAnalyzing(false)
@@ -97,12 +206,13 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
         position: 'relative',
         background: '#fff',
         width: '100%',
-        maxWidth: 540,
+        maxWidth: 640,
+        maxHeight: '90vh',
         borderRadius: 20,
         boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
         padding: '2rem',
         margin: '1rem',
-        overflow: 'hidden',
+        overflowY: 'auto',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -114,7 +224,7 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
                 Bulk Import from PDF
               </h3>
               <p style={{ fontSize: 13, color: '#6b7280', margin: '2px 0 0' }}>
-                High-accuracy question, diagram, & answer extraction
+                Extract questions, configure sections & set test guidelines
               </p>
             </div>
           </div>
@@ -134,12 +244,12 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
           style={{
             border: `2px dashed ${dragOver ? '#6366f1' : file ? '#10b981' : '#cbd5e1'}`,
             borderRadius: 14,
-            padding: '28px 16px',
+            padding: '22px 16px',
             textAlign: 'center',
             background: dragOver ? '#f5f3ff' : file ? '#f0fdf4' : '#f8fafc',
             cursor: analyzing ? 'default' : 'pointer',
             transition: 'all .2s ease',
-            marginBottom: 18,
+            marginBottom: 16,
           }}
         >
           <input
@@ -150,7 +260,7 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
             onChange={handleFileChange}
             disabled={analyzing}
           />
-          <div style={{ fontSize: 36, marginBottom: 8 }}>
+          <div style={{ fontSize: 32, marginBottom: 6 }}>
             {file ? '📄' : '📤'}
           </div>
           {file ? (
@@ -174,8 +284,41 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
           )}
         </div>
 
-        {/* Configuration Options */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
+        {/* Quiz Title & Minutes per Question */}
+        <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: 12, marginBottom: 14 }}>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+              Quiz Title
+            </label>
+            <input
+              type="text"
+              className="inp"
+              placeholder="e.g. JEE Main Chemistry Mock 2026"
+              value={quizTitle}
+              onChange={(e) => setQuizTitle(e.target.value)}
+              disabled={analyzing}
+              style={{ width: '100%' }}
+            />
+          </div>
+          <div>
+            <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
+              Minutes / Question
+            </label>
+            <input
+              type="number"
+              min="1"
+              max="60"
+              className="inp"
+              value={timePerQ}
+              onChange={(e) => setTimePerQ(Math.max(1, parseInt(e.target.value) || 1))}
+              disabled={analyzing}
+              style={{ width: '100%' }}
+            />
+          </div>
+        </div>
+
+        {/* Marks Scheme */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
           <div>
             <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
               Default Positive Marks
@@ -208,18 +351,177 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
           </div>
         </div>
 
-        <div style={{ marginBottom: 20 }}>
+        {/* Sections Configuration */}
+        <div style={{ marginBottom: 16, background: '#faf5ff', border: '1.5px solid #e9d5ff', borderRadius: 12, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <label style={{ fontSize: 12, fontWeight: 800, color: '#581c87', margin: 0 }}>
+              📑 Configured Sections (For Question Assignment)
+            </label>
+            <span style={{ fontSize: 11, color: '#7e22ce', fontWeight: 600 }}>
+              {sections.length} section{sections.length === 1 ? '' : 's'}
+            </span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {sections.map(s => (
+              <span
+                key={s}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  padding: '3px 8px',
+                  borderRadius: 6,
+                  background: '#fff',
+                  border: '1px solid #c084fc',
+                  color: '#6b21a8',
+                  fontSize: 12,
+                  fontWeight: 700
+                }}
+              >
+                {s}
+                {sections.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => removeSection(s)}
+                    disabled={analyzing}
+                    style={{ background: 'none', border: 'none', color: '#9333ea', cursor: 'pointer', padding: 0, fontWeight: 800, fontSize: 12 }}
+                  >
+                    ×
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              className="inp"
+              placeholder="Add section name (e.g. Section E, Physics)"
+              value={newSecInput}
+              onChange={e => setNewSecInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addSection() } }}
+              disabled={analyzing}
+              style={{ flex: 1, fontSize: 12, padding: '5px 9px' }}
+            />
+            <button
+              type="button"
+              onClick={addSection}
+              disabled={analyzing || !newSecInput.trim()}
+              className="btn-sec"
+              style={{ fontSize: 12, padding: '5px 12px', fontWeight: 700, borderColor: '#c084fc', color: '#6b21a8' }}
+            >
+              + Add
+            </button>
+          </div>
+        </div>
+
+        {/* Test Instructions */}
+        <div style={{ marginBottom: 16 }}>
           <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
-            Default Section Name
+            📝 Test Instructions
           </label>
-          <input
+          <textarea
             className="inp"
-            value={section}
-            onChange={(e) => setSection(e.target.value)}
-            placeholder="e.g. Physics or Section A"
+            rows={3}
+            value={instructions}
+            onChange={e => setInstructions(e.target.value)}
             disabled={analyzing}
-            style={{ width: '100%' }}
+            placeholder="Enter test instructions for students..."
+            style={{ width: '100%', fontSize: 12, lineHeight: 1.5, boxSizing: 'border-box' }}
           />
+        </div>
+
+        {/* Test Availability Window */}
+        <div style={{ marginBottom: 16, border: '1.5px solid #c7d2fe', background: '#fafbff', borderRadius: 12, padding: '12px 14px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+            <div>
+              <label style={{ margin: 0, color: '#312e81', fontSize: 13, fontWeight: 800 }}>
+                🕒 Test Availability Window
+              </label>
+              <div style={{ fontSize: 11, color: '#6366f1', marginTop: 1 }}>
+                Default Time Zone: <strong>Asia/Kolkata (IST)</strong>
+              </div>
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 700, color: '#475569', cursor: 'pointer' }}>
+              <input type="checkbox" checked={enableWindow} onChange={e => setEnableWindow(e.target.checked)} disabled={analyzing} />
+              Enforce Window
+            </label>
+          </div>
+
+          {enableWindow && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+              <div>
+                <label style={{ fontSize: 11, color: '#475569', display: 'block', marginBottom: 3, fontWeight: 600 }}>Available From (IST)</label>
+                <input
+                  type="datetime-local"
+                  className="inp"
+                  value={availStart}
+                  onChange={e => setAvailStart(e.target.value)}
+                  disabled={analyzing}
+                  style={{ width: '100%', fontSize: 11, padding: '5px 7px' }}
+                />
+              </div>
+              <div>
+                <label style={{ fontSize: 11, color: '#475569', display: 'block', marginBottom: 3, fontWeight: 600 }}>Available Until (IST)</label>
+                <input
+                  type="datetime-local"
+                  className="inp"
+                  value={availEnd}
+                  onChange={e => setAvailEnd(e.target.value)}
+                  disabled={analyzing}
+                  style={{ width: '100%', fontSize: 11, padding: '5px 7px' }}
+                />
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Optional Solution PDF */}
+        <div style={{ marginBottom: 18, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 12, padding: '12px 14px' }}>
+          <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
+            📑 Solution PDF (Optional)
+          </label>
+          {solutionPdf ? (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#ecfdf5', padding: '6px 10px', borderRadius: 8, border: '1px solid #a7f3d0' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, color: '#065f46', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 300 }}>
+                ✓ {solutionPdfName || 'Solution Attached'}
+              </span>
+              <button
+                type="button"
+                onClick={removeSolutionPdf}
+                disabled={analyzing}
+                style={{ background: 'none', border: 'none', color: '#ef4444', fontWeight: 800, fontSize: 11, cursor: 'pointer' }}
+              >
+                Remove
+              </button>
+            </div>
+          ) : (
+            <div>
+              <input
+                type="file"
+                id="modal-solution-pdf"
+                accept="application/pdf"
+                onChange={handleSolutionPdfUpload}
+                style={{ display: 'none' }}
+                disabled={analyzing || pdfUploading}
+              />
+              <label
+                htmlFor="modal-solution-pdf"
+                style={{
+                  display: 'inline-block',
+                  padding: '5px 12px',
+                  background: '#fff',
+                  border: '1px dashed #94a3b8',
+                  borderRadius: 6,
+                  cursor: analyzing || pdfUploading ? 'default' : 'pointer',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  color: '#475569'
+                }}
+              >
+                {pdfUploading ? 'Reading PDF…' : '+ Attach Solution PDF'}
+              </label>
+            </div>
+          )}
         </div>
 
         {/* Error Alert */}

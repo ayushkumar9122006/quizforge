@@ -88,6 +88,8 @@ function ImageField({ value, onCrop, placeholder, disabled }) {
 
 export default function QuestionEditor({
   initQuestions,
+  questions: propQuestions,
+  meta,
   quizTitle,
   timePerQ,
   instructions,
@@ -97,18 +99,41 @@ export default function QuestionEditor({
   onBack,
   saving,
   saveError,
-  onBulkImportClick
+  saveErr,
+  onBulkImportClick,
+  onImportClick
 }) {
+  const effectiveInit = (initQuestions && Array.isArray(initQuestions) && initQuestions.length > 0)
+    ? initQuestions
+    : (propQuestions && Array.isArray(propQuestions) && propQuestions.length > 0)
+    ? propQuestions
+    : [
+        {
+          id: uid(),
+          text: '',
+          options: ['', '', '', ''],
+          correct: null,
+          explanation: '',
+          section: 'Section A',
+          diagram: null,
+          positive_marks: 4,
+          negative_marks: 1
+        }
+      ]
+
   const [questions, setQuestions] = useState(
-    initQuestions.map(q => ({
+    effectiveInit.map(q => ({
       ...q,
       positive_marks: q.positive_marks !== undefined ? Number(q.positive_marks) : 4,
       negative_marks: q.negative_marks !== undefined ? Number(q.negative_marks) : 1
     }))
   )
   const [cur,             setCur]             = useState(0)
-  const [solutionPdf,     setSolutionPdf]     = useState(initSolutionPdf || null)
-  const [solutionPdfName, setSolutionPdfName] = useState(initSolutionPdfName || '')
+  const [solutionPdf,     setSolutionPdf]     = useState(initSolutionPdf !== undefined ? initSolutionPdf : (meta?.solutionPdf || null))
+  const [solutionPdfName, setSolutionPdfName] = useState(initSolutionPdfName !== undefined ? initSolutionPdfName : (meta?.solutionPdfName || ''))
+
+  const effectiveSaveError = saveError || saveErr
+  const effectiveBulkImport = onBulkImportClick || onImportClick
 
   // Full-page image upload panel
   const [showUpload, setShowUpload] = useState(false)
@@ -140,6 +165,51 @@ export default function QuestionEditor({
     const nc = x.correct === oi ? null : (x.correct !== null && x.correct > oi ? x.correct - 1 : x.correct)
     return { ...x, options: o, correct: nc }
   }))
+
+  // ── Question Management: Add, Delete, Reorder ───────────────────────────────
+  const addQuestion = () => {
+    const curSec = q.section || 'Section A'
+    const newQ = {
+      id: uid(),
+      text: '',
+      options: ['', '', '', ''],
+      correct: null,
+      explanation: '',
+      section: curSec,
+      diagram: null,
+      positive_marks: q.positive_marks !== undefined ? q.positive_marks : 4,
+      negative_marks: q.negative_marks !== undefined ? q.negative_marks : 1,
+    }
+    const nextIdx = cur + 1
+    const nextList = [...questions.slice(0, nextIdx), newQ, ...questions.slice(nextIdx)]
+    setQuestions(nextList)
+    setCur(nextIdx)
+  }
+
+  const deleteQuestion = () => {
+    if (questions.length <= 1) {
+      alert('A quiz must have at least one question.')
+      return
+    }
+    if (!window.confirm(`Delete question #${cur + 1}?`)) return
+    const nextList = questions.filter((_, i) => i !== cur)
+    setQuestions(nextList)
+    setCur(c => Math.min(nextList.length - 1, c))
+  }
+
+  const moveQuestion = (dir) => {
+    const targetIdx = cur + dir
+    if (targetIdx < 0 || targetIdx >= questions.length) return
+    const reordered = [...questions]
+    const temp = reordered[cur]
+    reordered[cur] = reordered[targetIdx]
+    reordered[targetIdx] = temp
+    setQuestions(reordered)
+    setCur(targetIdx)
+  }
+
+  const existingSections = Array.from(new Set(questions.map(x => x.section).filter(Boolean)))
+  if (existingSections.length === 0) existingSections.push('Section A')
 
   // ── When admin has cropped the one question from the full page ───────────────
   const handleQuestionCropReady = src => {
@@ -226,21 +296,62 @@ export default function QuestionEditor({
       />
 
       {/* Top meta */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:6 }}>
-        <div>
-          <span style={{ fontSize:13, fontWeight:700, color:'#6366f1' }}>{secName}</span>
-          <span style={{ fontSize:13, color:'#9ca3af', marginLeft:8 }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10, flexWrap:'wrap', gap:10 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          <select
+            value={q.section || existingSections[0] || 'Section A'}
+            onChange={e => upQ('section', e.target.value)}
+            style={{ fontSize:13, fontWeight:800, color:'#4f46e5', background:'#ede9fe', border:'1.5px solid #c7d2fe', padding:'4px 10px', borderRadius:8, cursor:'pointer' }}
+          >
+            {existingSections.map(s => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+          <span style={{ fontSize:13, color:'#64748b' }}>
             Q{qInSec}/{totInSec} in section · Overall {cur + 1}/{questions.length}
           </span>
         </div>
-        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
-          {onBulkImportClick && (
+        <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
+          <button
+            type="button"
+            onClick={() => moveQuestion(-1)}
+            disabled={cur === 0}
+            className="btn-sec"
+            title="Move Question Up"
+            style={{ fontSize:12, padding:'5px 10px', fontWeight:700, cursor: cur === 0 ? 'not-allowed' : 'pointer' }}>
+            ↑ Up
+          </button>
+          <button
+            type="button"
+            onClick={() => moveQuestion(1)}
+            disabled={cur === questions.length - 1}
+            className="btn-sec"
+            title="Move Question Down"
+            style={{ fontSize:12, padding:'5px 10px', fontWeight:700, cursor: cur === questions.length - 1 ? 'not-allowed' : 'pointer' }}>
+            ↓ Down
+          </button>
+          <button
+            type="button"
+            onClick={addQuestion}
+            className="btn-sec"
+            style={{ fontSize:12, padding:'5px 11px', fontWeight:700, color:'#059669', borderColor:'#a7f3d0', background:'#ecfdf5', cursor:'pointer' }}>
+            + Add Q
+          </button>
+          <button
+            type="button"
+            onClick={deleteQuestion}
+            disabled={questions.length <= 1}
+            className="btn-sec"
+            style={{ fontSize:12, padding:'5px 11px', fontWeight:700, color:'#dc2626', borderColor:'#fca5a5', background:'#fef2f2', cursor: questions.length <= 1 ? 'not-allowed' : 'pointer' }}>
+            🗑 Delete
+          </button>
+          {effectiveBulkImport && (
             <button
               type="button"
               className="btn-sec"
-              onClick={onBulkImportClick}
+              onClick={effectiveBulkImport}
               style={{ fontSize:12, padding:'5px 12px', display:'flex', alignItems:'center', gap:5, fontWeight:700, color:'#4f46e5', borderColor:'#c7d2fe', background:'#f5f3ff', cursor:'pointer' }}>
-              ⚡ Bulk Import from PDF
+              ⚡ Bulk Import PDF
             </button>
           )}
           <button className="btn-ghost" onClick={onBack}>← Exit</button>
@@ -444,9 +555,9 @@ export default function QuestionEditor({
       </div>
 
       {/* Save error */}
-      {saveError && (
+      {effectiveSaveError && (
         <div style={{ marginBottom:12, padding:'10px 14px', background:'#fef2f2', border:'1px solid #fca5a5', borderRadius:9, fontSize:13, color:'#dc2626', fontWeight:600 }}>
-          ⚠ {saveError}
+          ⚠ {effectiveSaveError}
         </div>
       )}
 

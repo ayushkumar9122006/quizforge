@@ -112,6 +112,53 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
   }
 }
 
+export function sortQuestionsBySection(questionsList) {
+  if (!questionsList || questionsList.length <= 1) return questionsList || []
+
+  // Extract distinct sections in their order of appearance
+  const seenSections = []
+  questionsList.forEach(q => {
+    const s = q.section || 'General'
+    if (!seenSections.includes(s)) seenSections.push(s)
+  })
+
+  // Natural comparator for section names, e.g. "Section A" < "Section B"
+  const sectionRank = (sec) => {
+    const m = String(sec).match(/^section\s*([a-z0-9]+)/i)
+    if (m) {
+      const code = m[1].toUpperCase()
+      if (code.length === 1 && code >= 'A' && code <= 'Z') {
+        return code.charCodeAt(0) - 65
+      }
+      const num = parseInt(code, 10)
+      if (!isNaN(num)) return num
+    }
+    return 1000 + seenSections.indexOf(sec)
+  }
+
+  const sortedSections = [...seenSections].sort((a, b) => {
+    const rankA = sectionRank(a)
+    const rankB = sectionRank(b)
+    if (rankA !== rankB) return rankA - rankB
+    return seenSections.indexOf(a) - seenSections.indexOf(b)
+  })
+
+  // Group questions by section, preserving original relative order
+  const grouped = {}
+  sortedSections.forEach(s => { grouped[s] = [] })
+  questionsList.forEach(q => {
+    const s = q.section || 'General'
+    if (!grouped[s]) grouped[s] = []
+    grouped[s].push(q)
+  })
+
+  const sorted = []
+  sortedSections.forEach(s => {
+    if (grouped[s]) sorted.push(...grouped[s])
+  })
+  return sorted
+}
+
 // Convert backend API format → frontend format
 export function fromApiFormat(apiQuiz) {
   return {
@@ -127,11 +174,11 @@ export function fromApiFormat(apiQuiz) {
     published:         apiQuiz.status === 'published',
     timePerQ:          apiQuiz.time_per_q_sec,
     createdAt:         apiQuiz.created_at,
-    questions: (apiQuiz.questions || []).map(q => ({
+    questions: sortQuestionsBySection((apiQuiz.questions || []).map(q => ({
       id:             q.id,
       text:           q.text,
       qImage:         q.question_image,
-      section:        q.section,
+      section:        q.section || 'General',
       correct:        q.correct_answer,
       explanation:    q.explanation,
       marks:          q.positive_marks !== undefined ? q.positive_marks : (q.marks || 1),
@@ -148,7 +195,7 @@ export function fromApiFormat(apiQuiz) {
             ? { type: 'image', src: opt.image }
             : opt.text
         ),
-    })),
+    }))),
   }
 }
 

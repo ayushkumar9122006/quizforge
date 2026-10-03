@@ -202,6 +202,7 @@ class BulkImportQuestionItem(BaseModel):
     question_number: int
     question_type: str = "single_correct" # "single_correct" | "multi_correct" | "numerical" | "assertion_reason" | "match_column"
     section: str = "General"
+    topic: Optional[str] = None
     text: str = ""
     question_image: Optional[str] = None # base64 data URL of diagram or statement
     diagram: Optional[str] = None

@@ -11,7 +11,9 @@ from services.pdf_importer_service import analyze_pdf
 from crud.quiz import create_quiz, get_quiz, add_questions_to_quiz
 from schemas.quiz import QuizCreate, QuestionCreate, OptionCreate, BulkImportQuestionItem, BulkImportOptionItem
 
-PDF_PATH = "/Users/ayushkumar/Downloads/JEE_Main_GOC_Kinetics_Questions_with_Answers.pdf"
+PDF_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "JEE_Main_GOC_Kinetics_Questions_with_Answers.pdf"))
+if not os.path.exists(PDF_PATH):
+    PDF_PATH = "/Users/ayushkumar/Downloads/JEE_Main_GOC_Kinetics_Questions_with_Answers.pdf"
 TEST_DB_URL = "sqlite+aiosqlite:///:memory:"
 
 async def test_bulk_importer():
@@ -48,7 +50,7 @@ async def test_bulk_importer():
         assert q.correct_answer in [0, 1, 2, 3], f"Question {q.question_number} invalid correct_answer {q.correct_answer}"
         assert q.positive_marks == 4.0
         assert q.negative_marks == 1.0
-        assert q.section in ["Chemical Kinetics", "General Organic Chemistry", "Chemistry"]
+        assert q.section == "Chemistry"
         assert q.source_image is not None, f"Question {q.question_number} missing source preview image"
 
         if q.question_number in match_column_indices:

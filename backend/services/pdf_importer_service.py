@@ -422,12 +422,15 @@ async def analyze_pdf(
         # Parse statement, options, correct answer, explanation
         statement, options_dict_list, correct_idx, raw_ans, explanation = extract_options_and_answer(full_raw_body)
 
-        # Determine section (e.g. if Section A or Section B was declared)
-        section = default_section
-        if "SECTION A" in statement.upper() or q_num <= 17:
-            section = "Chemical Kinetics" if "Kinetics" in filename or "Kinetics" in statement else default_section
-        if "SECTION B" in statement.upper() or q_num >= 18:
-            section = "General Organic Chemistry" if "Organic" in filename or "GOC" in filename or "GOC" in statement else default_section
+        # Determine section: Admin-configured default_section is authoritative
+        section = default_section or "Section A"
+
+        # Topic metadata: Extracted independently, does NOT override question section
+        topic = None
+        if "Kinetics" in filename or "Kinetics" in statement:
+            topic = "Chemical Kinetics"
+        elif "Organic" in filename or "GOC" in filename or "GOC" in statement:
+            topic = "General Organic Chemistry"
 
         # Strip accidental section header text from problem statement
         statement = re.sub(r"^SECTION\s+[A-Z]\s*—?[^\n]*\n+", "", statement, flags=re.IGNORECASE).strip()
@@ -441,15 +444,10 @@ async def analyze_pdf(
         diagram_image = None
         match_data_json = None
 
-        # Detect visual Match-the-Column question (containing structures, diagrams or visual table)
-        has_imgs = len(images) > 0
-        has_structure_hint = any(
-            hint in full_raw_body.lower()
-            for hint in ["shown as structures", "shown below", "structure", "structures"]
-        )
-        is_visual_match = (q_type == "match_column") and (has_imgs or has_structure_hint)
+        # All Match-the-Column questions use image-first table extraction from original PDF
+        is_match_column = (q_type == "match_column")
 
-        if is_visual_match:
+        if is_match_column:
             # ── RULE 1: IMAGE-FIRST TABLE EXTRACTION FROM ORIGINAL PDF ───────────
             # Locate the complete matching table from original PDF page preserving
             # all rows, columns, headings, diagrams, structures, labels, and borders.
@@ -467,22 +465,29 @@ async def analyze_pdf(
                 for b in q_blocks:
                     txt = b[4].strip()
                     if (
-                        re.match(r"^\s*Column\s*[-\u2013]?\s*I(?:\b|\s*\(|\s*\[)", txt, re.IGNORECASE)
+                        re.search(r"Column\s*[-\u2013]?\s*I(?:\b|\s*\(|\s*\[|\n)", txt, re.IGNORECASE)
                         and col_header_y is None
                     ):
-                        col_header_y = b[1]
+                        if txt.startswith("Column-I") or "\nColumn-I" in txt:
+                            col_header_y = b[1]
+                        elif not txt.startswith("Match the Column"):
+                            col_header_y = b[1]
+
                     if (
-                        re.match(r"^\([a-d]\)\s+[A-D]\s*[-\u2013]", txt, re.IGNORECASE)
+                        re.search(r"^\s*\([a-d1-4]\)\s+[A-Da-d1-4]\s*[-\u2013]", txt, re.IGNORECASE)
                         and opt_start_y is None
                     ):
                         opt_start_y = b[1]
+
+                if col_header_y is None and len(q_blocks) >= 2:
+                    col_header_y = q_blocks[1][1]
 
                 if col_header_y is not None and opt_start_y is not None and opt_start_y > col_header_y:
                     clip_rect = pymupdf.Rect(
                         25,
                         max(0, col_header_y - 4),
                         page.rect.width - 25,
-                        min(page.rect.height, opt_start_y - 4),
+                        min(page.rect.height, opt_start_y - 2),
                     )
                     table_pix = page.get_pixmap(matrix=zoom_mat, clip=clip_rect)
                     diagram_image = _pixmap_to_base64_data_url(table_pix)
@@ -500,7 +505,6 @@ async def analyze_pdf(
                     table_pix = page.get_pixmap(matrix=zoom_mat, clip=clip_rect)
                     diagram_image = _pixmap_to_base64_data_url(table_pix)
                     primary_image = None
-                    review_notes.append("Visual table crop boundary approximated - please verify")
 
             # ── RULE 2: EXTRACT ONLY THE INTRODUCTORY STATEMENT ──────────────────
             # The statement must contain only the problem introduction, without
@@ -511,8 +515,8 @@ async def analyze_pdf(
             else:
                 statement = _clean_text(re.split(r"\n\s*Column\s*[-\u2013]?\s*I", statement, flags=re.IGNORECASE)[0])
 
-            # For image-first visual match questions, no reconstructed text table is stored
-            match_data_json = None
+            # Populate structured match_data if available (as structured backup)
+            match_data_json = parse_match_column_data(full_raw_body)
         else:
             # Standard diagram handling for non-visual-match questions
             if images:
@@ -526,10 +530,6 @@ async def analyze_pdf(
                     diagram_image = composite_image
                 else:
                     primary_image = composite_image
-
-            # Populate structured match_data for text-only Match-the-Column questions
-            if q_type == "match_column":
-                match_data_json = parse_match_column_data(statement)
 
         # Build options model
         options_models = []
@@ -561,7 +561,7 @@ async def analyze_pdf(
                 review_notes.append(f"Printed correct answer could not be verified (raw: '{raw_ans}')")
                 confidence -= 0.25
 
-        if q_type == "match_column" and not is_visual_match:
+        if q_type == "match_column" and not diagram_image:
             if "COLUMN-I" not in statement.upper() and "COLUMN I" not in statement.upper():
                 review_notes.append("Match the column structure may need formatting review")
                 confidence -= 0.1
@@ -577,6 +577,7 @@ async def analyze_pdf(
             question_number=q_num,
             question_type=q_type,
             section=section,
+            topic=topic,
             text=statement,
             question_image=primary_image,
             diagram=diagram_image,
