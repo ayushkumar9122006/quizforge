@@ -5,6 +5,7 @@ import socket
 from typing import Tuple
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+import httpx
 from database.config import settings
 
 
@@ -18,6 +19,68 @@ def _mask_email(email: str) -> str:
     else:
         masked_local = local[0] + "***" + local[-1]
     return f"{masked_local}@{domain}"
+
+
+async def _send_resend_async(to_email: str, subject: str, text_body: str, html_body: str) -> Tuple[bool, str]:
+    """
+    Sends email via Resend HTTPS REST API (https://api.resend.com/emails).
+    Returns (success: bool, error_description: str).
+    Never logs or leaks the API key, OTP, or sensitive email contents.
+    """
+    if not settings.resend_api_key:
+        return False, "RESEND_API_KEY is not configured"
+
+    from_addr = settings.email_from or "onboarding@resend.dev"
+    payload = {
+        "from": from_addr,
+        "to": [to_email],
+        "subject": subject,
+        "text": text_body,
+        "html": html_body,
+    }
+    headers = {
+        "Authorization": f"Bearer {settings.resend_api_key.strip()}",
+        "Content-Type": "application/json",
+    }
+    masked = _mask_email(to_email)
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post("https://api.resend.com/emails", json=payload, headers=headers)
+
+        if resp.status_code in (200, 201):
+            try:
+                data = resp.json()
+                email_id = data.get("id", "ok")
+            except Exception:
+                email_id = "ok"
+            print(f"[EMAIL SERVICE] Successfully delivered OTP email to {masked} via Resend API (id: {email_id})")
+            return True, ""
+
+        # Handle specific Resend HTTP status codes
+        error_detail = "Resend API error"
+        try:
+            err_json = resp.json()
+            error_detail = err_json.get("message") or err_json.get("name") or str(err_json)
+        except Exception:
+            error_detail = resp.text[:200]
+
+        err_msg = f"Resend API error ({resp.status_code}): {error_detail}"
+        print(f"[EMAIL SERVICE ERROR] {err_msg} for recipient {masked}")
+        return False, err_msg
+
+    except httpx.TimeoutException:
+        err = "Resend API connection timed out after 15s"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except httpx.NetworkError as exc:
+        err = f"Resend API network error: {type(exc).__name__}"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except Exception as exc:
+        err = f"Resend API unexpected error: {type(exc).__name__} - {exc}"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
 
 
 def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str) -> Tuple[bool, str]:
@@ -139,27 +202,33 @@ If you did not request this, you can safely ignore this email.
 
     masked = _mask_email(to_email)
 
-    if settings.is_production:
-        if not settings.smtp_host:
-            print(f"[EMAIL SERVICE ERROR] Production mode is active but SMTP_HOST is not configured. Delivery aborted for {masked}.")
+    # 1. Primary: Resend HTTPS API
+    if settings.resend_api_key:
+        success, err = await _send_resend_async(to_email, subject, text_body, html_body)
+        if success:
+            return True
+        if settings.is_production:
+            print(f"[EMAIL SERVICE ERROR] Production Resend delivery to {masked} failed: {err}")
             return False
+        print(f"[EMAIL SERVICE] Local Resend delivery failed ({err}), falling back to console mock.")
 
+    # 2. Secondary / Legacy: SMTP (if configured and Resend not configured)
+    elif settings.smtp_host:
         success, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
         if success:
             print(f"[EMAIL SERVICE] Successfully delivered OTP email to {masked} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
             return True
-        else:
-            print(f"[EMAIL SERVICE ERROR] Failed to deliver OTP email to {masked}. SMTP Error: {err}")
+        if settings.is_production:
+            print(f"[EMAIL SERVICE ERROR] Production SMTP delivery to {masked} failed: {err}")
             return False
-
-    # ── Non-Production / Local Development Fallback ──────────────────────────
-    if settings.smtp_host:
-        success, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
-        if success:
-            print(f"[EMAIL SERVICE] Successfully sent OTP email to {to_email} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
-            return True
         print(f"[EMAIL SERVICE] Local SMTP delivery attempt failed ({err}), falling back to console mock.")
 
+    # 3. Production with neither configured:
+    if settings.is_production:
+        print(f"[EMAIL SERVICE ERROR] Production mode is active but neither RESEND_API_KEY nor SMTP_HOST is configured. Delivery aborted for {masked}.")
+        return False
+
+    # 4. Non-Production / Local Development Fallback Mock
     print(f"\n{'='*70}")
     print(f"[QUIZEE EMAIL SERVICE - DEVELOPMENT MODE]")
     print(f"To: {to_email} ({name or role_label})")
