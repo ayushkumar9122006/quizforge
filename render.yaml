@@ -35,6 +35,10 @@ services:
         value: uploads
       - key: ENVIRONMENT
         value: production
+      - key: RESEND_API_KEY
+        sync: false          # Set in Render dashboard (e.g. re_...)
+      - key: EMAIL_FROM
+        value: onboarding@resend.dev
       - key: SMTP_HOST
         sync: false          # Set in Render dashboard (e.g. smtp.gmail.com)
       - key: SMTP_PORT

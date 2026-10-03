@@ -47,7 +47,9 @@ class Settings(BaseSettings):
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
-    # Email / SMTP configuration
+    # Email configuration (Resend API & SMTP fallback)
+    resend_api_key: str = os.getenv("RESEND_API_KEY", "")
+    email_from: str = os.getenv("EMAIL_FROM", os.getenv("SMTP_FROM_EMAIL", "onboarding@resend.dev"))
     smtp_host: str = os.getenv("SMTP_HOST", "")
     smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
     smtp_username: str = os.getenv("SMTP_USERNAME", "")
