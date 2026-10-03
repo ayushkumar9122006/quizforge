@@ -47,7 +47,11 @@ export default function LiveLeaderboard({ entries = [], title = 'Leaderboard', c
                     {entry.student_name}{isMe && <span style={{ fontSize:11, marginLeft:6, opacity:.6 }}>(you)</span>}
                   </div>
                   <div style={{ fontSize:12, color:'#9ca3af' }}>
-                    {Math.round((entry.accuracy || 0) * 100)}% accuracy · {formatDuration(entry.time_taken_sec || 0)}
+                    {(() => {
+                      const raw = Number(entry.accuracy || 0);
+                      const accVal = raw > 1 ? raw : raw * 100;
+                      return Math.min(100, Math.max(0, Math.round(accVal)));
+                    })()}% accuracy · {formatDuration(entry.time_taken_sec || 0)}
                   </div>
                 </div>
                 {/* Score */}

@@ -22,6 +22,7 @@ from services.llm_service import resolve_unset_answers
 from services.analytics_service import get_session_analytics
 from websocket.manager import manager
 from websocket.events import evt_leaderboard, evt_student_submitted, evt_quiz_started, evt_quiz_ended
+from datetime import datetime, timezone, timedelta
 from typing import List
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
@@ -112,7 +113,19 @@ async def submit(
     # ONLY place correct answers are ever resolved for scoring purposes.
     await resolve_unset_answers(db, questions)
 
-    attempt, results = await submit_attempt(db, attempt.id, data, questions, auto=auto)
+    # Determine if auto-submission is required by server-authoritative deadline
+    total_q = len(questions) or 1
+    base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
+    started_at_tz = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+    deadline = started_at_tz + timedelta(seconds=base_duration_sec)
+    if quiz.availability_end:
+        end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
+        deadline = min(deadline, end_tz)
+
+    now_utc = datetime.now(timezone.utc)
+    is_auto = auto or (now_utc > deadline + timedelta(seconds=5))
+
+    attempt, results = await submit_attempt(db, attempt.id, data, questions, auto=is_auto)
 
     # ── Broadcast real-time updates ───────────────────────────────────────────
     room_code = session.room_code

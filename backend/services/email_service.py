@@ -1,0 +1,119 @@
+import asyncio
+import smtplib
+import ssl
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from database.config import settings
+
+def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str) -> bool:
+    """Synchronous SMTP email sender."""
+    if not settings.smtp_host:
+        return False
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"] = settings.smtp_from_email
+    msg["To"] = to_email
+
+    part1 = MIMEText(text_body, "plain", "utf-8")
+    part2 = MIMEText(html_body, "html", "utf-8")
+    msg.attach(part1)
+    msg.attach(part2)
+
+    try:
+        if settings.smtp_port == 465:
+            context = ssl.create_default_context()
+            with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=15) as server:
+                if settings.smtp_username and settings.smtp_password:
+                    server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())
+        else:
+            with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=15) as server:
+                if settings.smtp_use_tls:
+                    context = ssl.create_default_context()
+                    server.starttls(context=context)
+                if settings.smtp_username and settings.smtp_password:
+                    server.login(settings.smtp_username, settings.smtp_password)
+                server.sendmail(settings.smtp_from_email, [to_email], msg.as_string())
+        return True
+    except Exception as exc:
+        print(f"[EMAIL SERVICE ERROR] Failed to send email to {to_email}: {exc}")
+        return False
+
+
+async def send_otp_email(to_email: str, name: str, otp: str, role: str) -> bool:
+    """
+    Sends password recovery OTP to the user's email address.
+    If SMTP is not configured, logs to console for local testing.
+    """
+    role_label = "Administrator" if role == "admin" else "Student"
+    subject = f"Your QuiZee {role_label} Password Reset Code: {otp}"
+    expire_min = settings.otp_expire_minutes
+
+    text_body = f"""Hello {name or role_label},
+
+We received a request to reset your password for your QuiZee {role_label} account ({to_email}).
+
+Your verification code is: {otp}
+
+This code is valid for {expire_min} minutes. Do not share this code with anyone.
+If you did not request this, you can safely ignore this email.
+
+— The QuiZee Team
+"""
+
+    html_body = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>QuiZee Password Reset</title>
+</head>
+<body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 30px 10px;">
+  <div style="max-width: 520px; margin: 0 auto; background: #ffffff; border-radius: 16px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);">
+    <div style="background: linear-gradient(135deg, #6366f1, #8b5cf6); padding: 28px 24px; text-align: center;">
+      <h1 style="color: #ffffff; margin: 0; font-size: 26px; font-weight: 800; letter-spacing: -0.5px;">QuiZee</h1>
+      <p style="color: #e0e7ff; margin: 6px 0 0; font-size: 14px; font-weight: 500;">{role_label} Password Recovery</p>
+    </div>
+    <div style="padding: 32px 28px;">
+      <p style="color: #334155; font-size: 15px; line-height: 1.6; margin: 0 0 18px;">
+        Hello <strong>{name or role_label}</strong>,
+      </p>
+      <p style="color: #475569; font-size: 14px; line-height: 1.6; margin: 0 0 24px;">
+        We received a request to reset the password for your QuiZee account (<strong>{to_email}</strong>). Use the verification code below to proceed with resetting your password:
+      </p>
+      <div style="text-align: center; margin: 28px 0;">
+        <div style="display: inline-block; background: #f1f5f9; border: 2px dashed #6366f1; border-radius: 12px; padding: 14px 28px;">
+          <span style="font-family: 'Courier New', monospace; font-size: 32px; font-weight: 800; letter-spacing: 8px; color: #4338ca;">{otp}</span>
+        </div>
+        <p style="color: #64748b; font-size: 12px; margin: 10px 0 0; font-weight: 600;">Valid for {expire_min} minutes · Single use only</p>
+      </div>
+      <p style="color: #64748b; font-size: 13px; line-height: 1.5; margin: 24px 0 0; border-top: 1px solid #f1f5f9; padding-top: 16px;">
+        <strong>Security Tip:</strong> Never share this code with anyone. QuiZee representatives will never ask for your verification code or password.
+      </p>
+    </div>
+    <div style="background: #f8fafc; padding: 16px 24px; text-align: center; border-top: 1px solid #e2e8f0;">
+      <p style="color: #94a3b8; font-size: 12px; margin: 0;">
+        If you did not request a password reset, please ignore this email or review your account security.
+      </p>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+    if settings.smtp_host:
+        sent = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
+        if sent:
+            print(f"[EMAIL SERVICE] Successfully sent OTP email to {to_email} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
+            return True
+
+    # Development / Fallback mode: Print to console
+    print(f"\n{'='*70}")
+    print(f"[QUIZEE EMAIL SERVICE - DEVELOPMENT MODE]")
+    print(f"To: {to_email} ({name or role_label})")
+    print(f"Role: {role_label}")
+    print(f"Subject: {subject}")
+    print(f"VERIFICATION CODE (OTP): >>> {otp} <<<")
+    print(f"Expires in: {expire_min} minutes")
+    print(f"{'='*70}\n")
+    return True
