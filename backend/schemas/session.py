@@ -132,4 +132,5 @@ class StartQuizResponse(BaseModel):
     duration_sec: int
     started_at: datetime
     resumed: bool = False
+    effective_deadline: Optional[datetime] = None
 

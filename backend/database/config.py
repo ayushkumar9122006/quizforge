@@ -47,6 +47,14 @@ class Settings(BaseSettings):
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
+    # Email / SMTP configuration
+    smtp_host: str = os.getenv("SMTP_HOST", "")
+    smtp_port: int = int(os.getenv("SMTP_PORT", "587"))
+    smtp_username: str = os.getenv("SMTP_USERNAME", "")
+    smtp_password: str = os.getenv("SMTP_PASSWORD", "")
+    smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "noreply@quizee.com")
+    smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+    otp_expire_minutes: int = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
 
     class Config:
         env_file = ".env"

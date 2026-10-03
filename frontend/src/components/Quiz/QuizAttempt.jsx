@@ -11,10 +11,42 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   const perQ      = Math.max(1, Math.round(Number(quiz.timePerQ) || 300))
   const totalTime = Math.max(1, Math.round(quiz.effectiveDurationSec || (questions.length * perQ)))
 
-  const [answers,  setAnswers]  = useState({})
+  const storageDeadlineKey = `quizee_attempt_${quiz.id}_deadline`
+  const storageAnswersKey  = `quizee_attempt_${quiz.id}_answers`
+
+  const getTargetDeadlineMs = () => {
+    if (quiz.effectiveDeadline) {
+      const ms = new Date(quiz.effectiveDeadline).getTime()
+      try { localStorage.setItem(storageDeadlineKey, String(ms)) } catch {}
+      return ms
+    }
+    try {
+      const saved = localStorage.getItem(storageDeadlineKey)
+      if (saved && !isNaN(Number(saved))) {
+        return Number(saved)
+      }
+    } catch {}
+    const calculated = Date.now() + totalTime * 1000
+    try { localStorage.setItem(storageDeadlineKey, String(calculated)) } catch {}
+    return calculated
+  }
+
+  const deadlineMsRef = useRef(getTargetDeadlineMs())
+
+  const getInitialTotLeft = () => {
+    const diffSec = Math.max(0, Math.ceil((deadlineMsRef.current - Date.now()) / 1000))
+    return diffSec > 0 ? diffSec : totalTime
+  }
+
+  const [answers,  setAnswers]  = useState(() => {
+    try {
+      const raw = localStorage.getItem(storageAnswersKey)
+      return raw ? JSON.parse(raw) : {}
+    } catch { return {} }
+  })
   const [cur,      setCur]      = useState(0)
   const [qTime,    setQTime]    = useState(perQ)
-  const [totLeft,  setTotLeft]  = useState(totalTime)
+  const [totLeft,  setTotLeft]  = useState(getInitialTotLeft)
   const [confirm,  setConfirm]  = useState(false)
   const [marked,   setMarked]   = useState(new Set())
   const [palette,  setPalette]  = useState(false)
@@ -31,7 +63,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   const curRef        = useRef(cur)
   const submittedRef  = useRef(false)
 
-  useEffect(() => { answersRef.current = answers }, [answers])
+  useEffect(() => {
+    answersRef.current = answers
+    try {
+      localStorage.setItem(storageAnswersKey, JSON.stringify(answers))
+    } catch {}
+  }, [answers, storageAnswersKey])
+
   useEffect(() => { markedRef.current  = marked  }, [marked])
   useEffect(() => { qTimesRef.current  = qTimes  }, [qTimes])
   useEffect(() => { totalSpentRef.current = totalSpent }, [totalSpent])
@@ -49,9 +87,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     (auto = false) => {
       if (submittedRef.current) return
       submittedRef.current = true
+      try {
+        localStorage.removeItem(storageDeadlineKey)
+        localStorage.removeItem(storageAnswersKey)
+      } catch {}
       onSubmit(answersRef.current, auto, markedRef.current, qTimesRef.current, totalSpentRef.current)
     },
-    [onSubmit]
+    [onSubmit, storageDeadlineKey, storageAnswersKey]
   )
 
   useEffect(() => {
@@ -78,11 +120,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         }
         return Math.max(0, curSec - 1)
       })
-      setTotLeft(v => {
-        const curTot = Math.max(0, Math.round(v))
-        if (curTot <= 1) { doSubmit(true); return 0 }
-        return Math.max(0, curTot - 1)
-      })
+
+      // Authoritative overall remaining time against absolute deadline
+      const curRemaining = Math.max(0, Math.ceil((deadlineMsRef.current - Date.now()) / 1000))
+      setTotLeft(curRemaining)
+      if (curRemaining <= 0) {
+        doSubmit(true)
+      }
     }, 1000)
     return () => clearInterval(t)
   }, [questions.length, perQ, doSubmit])

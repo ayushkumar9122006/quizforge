@@ -88,6 +88,23 @@ class RefreshToken(Base):
     user : Mapped["User"] = relationship("User", back_populates="refresh_tokens")
 
 
+class PasswordResetOTP(Base):
+    """Stores secure, hashed OTP and reset tokens for student & admin password recovery."""
+    __tablename__ = "password_reset_otps"
+
+    id         : Mapped[str]          = mapped_column(String(36), primary_key=True, default=new_uuid)
+    user_id    : Mapped[str]          = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    role       : Mapped[str]          = mapped_column(String(20), nullable=False) # "admin" or "student"
+    hashed_otp : Mapped[str]          = mapped_column(String(255), nullable=False)
+    reset_token: Mapped[str|None]     = mapped_column(String(255), unique=True, nullable=True, index=True)
+    expires_at : Mapped[datetime]     = mapped_column(DateTime, nullable=False)
+    consumed   : Mapped[bool]         = mapped_column(Boolean, default=False, nullable=False)
+    attempts   : Mapped[int]          = mapped_column(Integer, default=0, nullable=False)
+    created_at : Mapped[datetime]     = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    user : Mapped["User"] = relationship("User")
+
+
 # ── Quiz ──────────────────────────────────────────────────────────────────────
 
 class Quiz(Base):

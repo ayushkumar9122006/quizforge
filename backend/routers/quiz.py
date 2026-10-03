@@ -18,9 +18,12 @@ from services.pdf_importer_service import analyze_pdf
 from utils.dependencies import require_admin, get_current_user
 from models.all_models import User, UserRole, QuizStatus, SessionStatus, AttemptStatus, QuizSession, Attempt
 from typing import List
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+import zoneinfo
 import secrets
 import base64
+
+IST = zoneinfo.ZoneInfo("Asia/Kolkata")
 
 router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 
@@ -144,9 +147,10 @@ async def start_quiz_attempt(
         if start_tz.tzinfo is None:
             start_tz = start_tz.replace(tzinfo=timezone.utc)
         if now < start_tz:
+            start_ist = start_tz.astimezone(IST)
             raise HTTPException(
                 status_code=400,
-                detail=f"This quiz is scheduled to start on {start_tz.strftime('%d %B %Y, %I:%M %p UTC')}. Not available yet.",
+                detail=f"This quiz is scheduled to start on {start_ist.strftime('%d %B %Y, %I:%M %p IST')}. Not available yet.",
             )
 
     if quiz.availability_end:
@@ -154,9 +158,10 @@ async def start_quiz_attempt(
         if end_tz.tzinfo is None:
             end_tz = end_tz.replace(tzinfo=timezone.utc)
         if now > end_tz:
+            end_ist = end_tz.astimezone(IST)
             raise HTTPException(
                 status_code=400,
-                detail=f"This quiz ended on {end_tz.strftime('%d %B %Y, %I:%M %p UTC')}. No new attempts permitted.",
+                detail=f"This quiz ended on {end_ist.strftime('%d %B %Y, %I:%M %p IST')}. The test window is closed.",
             )
 
     # Verify if student already submitted
@@ -215,29 +220,40 @@ async def start_quiz_attempt(
         await db.flush()
 
     # Calculate test duration and deadline clamping
+    # T_effective = min(T_quiz, T_window remaining)
     total_q = len(quiz.questions) or 1
     base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
 
-    effective_duration_sec = base_duration_sec
-    if quiz.availability_end:
-        end_tz = quiz.availability_end
-        if end_tz.tzinfo is None:
-            end_tz = end_tz.replace(tzinfo=timezone.utc)
-        remaining_window_sec = int((end_tz - now).total_seconds())
-        if remaining_window_sec < base_duration_sec:
-            effective_duration_sec = max(60, remaining_window_sec)
+    started_at_utc = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+    deadline_duration = started_at_utc + timedelta(seconds=base_duration_sec)
 
-    if resumed:
-        elapsed = int((datetime.utcnow() - attempt.started_at).total_seconds())
-        effective_duration_sec = max(10, effective_duration_sec - elapsed)
+    effective_deadline = deadline_duration
+    if quiz.availability_end:
+        end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
+        effective_deadline = min(deadline_duration, end_tz)
+
+    # Remaining time from now until effective deadline
+    remaining_sec = int((effective_deadline - now).total_seconds())
+
+    if remaining_sec <= 0:
+        # Time is up - auto-finalize attempt if in progress
+        from crud.session import submit_attempt
+        from schemas.session import AttemptSubmit
+        await submit_attempt(db, attempt.id, AttemptSubmit(answers=[]), quiz.questions, auto=True)
+        end_ist = effective_deadline.astimezone(IST)
+        raise HTTPException(
+            status_code=400,
+            detail=f"The test window has closed on {end_ist.strftime('%d %B %Y, %I:%M %p IST')}. Test has been submitted.",
+        )
 
     return StartQuizResponse(
         session_id=session.id,
         attempt_id=attempt.id,
         quiz_id=quiz.id,
-        duration_sec=effective_duration_sec,
+        duration_sec=remaining_sec,
         started_at=attempt.started_at,
         resumed=resumed,
+        effective_deadline=effective_deadline,
     )
 
 

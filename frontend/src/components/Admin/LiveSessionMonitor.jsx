@@ -63,7 +63,11 @@ export default function LiveSessionMonitor({
         hasSubmitted,
         score: lbEntry?.score,
         totalMarks: lbEntry?.total_marks,
-        accuracy: lbEntry ? Math.round(lbEntry.accuracy * 100) : null,
+        accuracy: lbEntry ? (() => {
+          const raw = Number(lbEntry.accuracy || 0);
+          const accVal = raw > 1 ? raw : raw * 100;
+          return Math.min(100, Math.max(0, Math.round(accVal)));
+        })() : null,
         timeTaken: lbEntry?.time_taken_sec,
         rank: lbEntry?.rank,
         status: hasSubmitted ? 'submitted' : (status === 'active' ? 'in_progress' : 'waiting')

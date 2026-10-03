@@ -128,6 +128,7 @@ export default function StudentPage({
       const configuredQuiz = {
         ...instructionTarget,
         effectiveDurationSec: resp.duration_sec,
+        effectiveDeadline: resp.effective_deadline,
         timePerQ: Math.max(1, Math.round(resp.duration_sec / (instructionTarget.questions?.length || 1))),
       }
 

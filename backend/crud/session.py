@@ -257,10 +257,65 @@ async def submit_attempt(
     return attempt, answer_results
 
 
+async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: str):
+    """
+    Checks for any in_progress attempts for this student whose deadline has passed,
+    and automatically finalizes them as auto_submitted.
+    """
+    from datetime import datetime, timezone, timedelta
+    from models.all_models import Quiz, QuizSession, Option, Question
+    from schemas.session import AttemptSubmit, AnswerSubmit
+    now = datetime.now(timezone.utc)
+
+    res = await db.execute(
+        select(Attempt)
+        .options(
+            selectinload(Attempt.session)
+            .selectinload(QuizSession.quiz)
+            .selectinload(Quiz.questions)
+            .selectinload(Question.options),
+            selectinload(Attempt.answers),
+        )
+        .where(
+            Attempt.student_id == student_id,
+            Attempt.status == AttemptStatus.in_progress,
+        )
+    )
+    in_prog = list(res.scalars().all())
+    for att in in_prog:
+        quiz = att.session.quiz if att.session else None
+        if not quiz:
+            continue
+        total_q = len(quiz.questions) or 1
+        base_dur = total_q * (quiz.time_per_q_sec or 300)
+        started_at = att.started_at.replace(tzinfo=timezone.utc) if att.started_at.tzinfo is None else att.started_at
+        deadline = started_at + timedelta(seconds=base_dur)
+        if quiz.availability_end:
+            end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
+            deadline = min(deadline, end_tz)
+
+        if now >= deadline:
+            sub = AttemptSubmit(
+                answers=[
+                    AnswerSubmit(
+                        question_id=a.question_id,
+                        selected_option=a.selected_option,
+                        marked_for_review=a.marked_for_review,
+                        response_text=a.response_text,
+                        time_taken_sec=a.time_taken_sec or 0,
+                    )
+                    for a in (att.answers or [])
+                ],
+                time_taken_sec=min(int((now - started_at).total_seconds()), int((deadline - started_at).total_seconds())),
+            )
+            await submit_attempt(db, att.id, sub, quiz.questions, auto=True)
+
+
 async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
     """
     Returns only completed/submitted attempts belonging strictly to student_id.
     """
+    await finalize_expired_attempts_for_student(db, student_id)
     from models.all_models import Quiz, Question, Option, QuizSession
     result = await db.execute(
         select(Attempt)
