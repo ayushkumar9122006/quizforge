@@ -55,6 +55,12 @@ class Settings(BaseSettings):
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "noreply@quizee.com")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
     otp_expire_minutes: int = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
+    environment: str = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))
+
+    @property
+    def is_production(self) -> bool:
+        env = (self.environment or "").lower().strip()
+        return env in ("production", "prod") or bool(os.getenv("RENDER"))
 
     class Config:
         env_file = ".env"

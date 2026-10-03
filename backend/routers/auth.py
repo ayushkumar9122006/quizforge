@@ -120,12 +120,18 @@ async def forgot_password_send_otp(data: ForgotPasswordRequest, db: AsyncSession
     await db.commit()
 
     # Deliver OTP
-    await send_otp_email(
+    delivered = await send_otp_email(
         to_email=user.email,
         name=user.name,
         otp=raw_otp,
         role=target_role,
     )
+
+    if not delivered and settings.is_production:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Unable to send verification code. Email delivery service is temporarily unavailable. Please try again later.",
+        )
 
     return GenericMessageResponse(message=generic_msg)
 
