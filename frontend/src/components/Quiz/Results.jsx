@@ -4,6 +4,7 @@ import LiveLeaderboard from './LiveLeaderboard.jsx'
 import { getExplanation } from '../../services/llmService.js'
 import { formatDuration } from '../../services/utils.js'
 import { viewSolutionPdf } from '../../services/quizService.js'
+import { downloadResponseSheetPdf } from '../../services/sessionService.js'
 
 const LABELS = ['A', 'B', 'C', 'D', 'E', 'F']
 
@@ -13,7 +14,8 @@ export default function Results({
   onBack,
   onHome,
   leaderboard = [],
-  currentUserId = null
+  currentUserId = null,
+  currentUserName = null,
 }) {
   const questions = result.questions || quiz.questions || []
   const [tab, setTab] = useState('analytics') // 'analytics' | 'review'
@@ -21,6 +23,23 @@ export default function Results({
   const [loadingE, setLoading] = useState({})
   const [expanded, setExpanded] = useState(null)
   const [lightbox, setLightbox] = useState(null)
+  const [downloadingPdf, setDownloadingPdf] = useState(false)
+
+  const handleDownloadResponseSheet = async () => {
+    const attemptId = result.id || result.attempt_id || result.attemptId
+    if (!attemptId) {
+      alert('Unable to identify attempt ID for downloading response sheet.')
+      return
+    }
+    setDownloadingPdf(true)
+    try {
+      await downloadResponseSheetPdf(attemptId, quiz.title || result.quizTitle || 'quiz')
+    } catch (err) {
+      alert(err.response?.data?.detail || 'Failed to download response sheet PDF.')
+    } finally {
+      setDownloadingPdf(false)
+    }
+  }
 
   // Authoritative marks and scores
   const score = Number(result.score !== undefined ? result.score : 0)
@@ -129,6 +148,18 @@ export default function Results({
           <p style={{ color: '#6b7280', fontSize: 13, margin: 0, fontWeight: 600 }}>{quiz.title || result.quizTitle || 'Quiz Result'}</p>
         </div>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {(result.id || result.attempt_id) && (
+            <button
+              className="btn-sec"
+              style={{ fontSize: 13, padding: '7px 15px', color: '#4338ca', borderColor: '#c7d2fe', background: '#eef2ff', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 6 }}
+              disabled={downloadingPdf}
+              onClick={handleDownloadResponseSheet}
+              title="Download official candidate response sheet PDF"
+            >
+              <span>📥</span>
+              <span>{downloadingPdf ? 'Downloading…' : 'Response Sheet PDF'}</span>
+            </button>
+          )}
           {hasSolutionPdf && (
             <button
               className="btn-sec"
@@ -193,6 +224,33 @@ export default function Results({
         {result.auto && (
           <div style={{ display: 'inline-block', marginTop: 10, padding: '4px 14px', background: '#fef3c7', color: '#92400e', borderRadius: 20, fontSize: 12, fontWeight: 700 }}>
             ⏰ Auto-submitted on timer expiry
+          </div>
+        )}
+
+        {(result.id || result.attempt_id) && (
+          <div style={{ marginTop: 16 }}>
+            <button
+              className="btn-pri"
+              style={{
+                fontSize: 13,
+                padding: '8px 18px',
+                background: 'linear-gradient(135deg, #4f46e5 0%, #6366f1 100%)',
+                color: '#fff',
+                border: 'none',
+                borderRadius: 10,
+                fontWeight: 800,
+                cursor: downloadingPdf ? 'wait' : 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 7,
+                boxShadow: '0 4px 12px rgba(79, 70, 229, 0.25)'
+              }}
+              disabled={downloadingPdf}
+              onClick={handleDownloadResponseSheet}
+            >
+              <span>📥</span>
+              <span>{downloadingPdf ? 'Generating PDF…' : 'Download Response Sheet (PDF)'}</span>
+            </button>
           </div>
         )}
       </div>
@@ -384,6 +442,7 @@ export default function Results({
                 entries={leaderboard}
                 title="Quiz Leaderboard & Rankings"
                 currentUserId={currentUserId}
+                currentUserName={currentUserName}
               />
             </div>
           )}

@@ -62,7 +62,23 @@ export async function viewSolutionPdf(quizId) {
 }
 
 // Convert frontend quiz format → backend API format
-export function toApiFormat(frontendQuiz, timePerQMin = 5) {
+export function toApiFormat(frontendQuiz, totalDurationMin = null, fallbackTimePerQMin = 5) {
+  const numQuestions = (frontendQuiz.questions || []).length || 1
+  let totMin = totalDurationMin !== null
+    ? totalDurationMin
+    : (frontendQuiz.total_duration_minutes ?? frontendQuiz.totalDurationMin ?? null)
+
+  let timePerQSec = 300
+  if (totMin !== null && totMin !== undefined && !isNaN(Number(totMin))) {
+    totMin = Number(Number(totMin).toFixed(2))
+    const perQMin = Number((totMin / numQuestions).toFixed(2))
+    timePerQSec = Math.round(perQMin * 60)
+  } else {
+    const perQMin = Number(Number(fallbackTimePerQMin || 5).toFixed(2))
+    timePerQSec = Math.round(perQMin * 60)
+    totMin = Number((perQMin * numQuestions).toFixed(2))
+  }
+
   return {
     title:             frontendQuiz.title || 'Untitled Quiz',
     description:       frontendQuiz.description || null,
@@ -71,7 +87,8 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
     solution_pdf_name: frontendQuiz.solution_pdf_name || null,
     availability_start: frontendQuiz.availability_start || null,
     availability_end:   frontendQuiz.availability_end || null,
-    time_per_q_sec:    (timePerQMin || 5) * 60,
+    total_duration_minutes: totMin !== null && !isNaN(totMin) ? Number(Number(totMin).toFixed(2)) : null,
+    time_per_q_sec:    timePerQSec,
     is_public:         false,
     tags:              Array.isArray(frontendQuiz.tags) ? frontendQuiz.tags : (typeof frontendQuiz.tags === 'string' && frontendQuiz.tags.trim() ? frontendQuiz.tags.split(',').map(t => t.trim()) : null),
     subject:           frontendQuiz.subject || null,

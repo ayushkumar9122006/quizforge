@@ -4,7 +4,7 @@ import { analyzePdfForImport } from '../../../services/quizService.js'
 export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quizId = null }) {
   const [file, setFile] = useState(null)
   const [quizTitle, setQuizTitle] = useState('')
-  const [timePerQ, setTimePerQ] = useState(5)
+  const [totalDuration, setTotalDuration] = useState('60.00')
   const [posMarks, setPosMarks] = useState(4)
   const [negMarks, setNegMarks] = useState(1)
   const [sections, setSections] = useState(['Section A', 'Section B', 'Section C', 'Section D'])
@@ -28,7 +28,7 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
     if (!open) {
       setFile(null)
       setQuizTitle('')
-      setTimePerQ(5)
+      setTotalDuration('60.00')
       setSolutionPdf(null)
       setSolutionPdfName('')
       setError('')
@@ -145,6 +145,17 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       return
     }
 
+    const parsedDur = parseFloat(totalDuration)
+    if (isNaN(parsedDur) || parsedDur <= 0) {
+      setError('Please enter a valid Total Quiz Duration greater than 0.')
+      return
+    }
+    const parts = String(totalDuration).split('.')
+    if (parts.length > 1 && parts[1].length > 2) {
+      setError('Total Quiz Duration cannot have more than 2 decimal places.')
+      return
+    }
+
     setError('')
     setAnalyzing(true)
 
@@ -171,11 +182,14 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       })
       clearInterval(interval)
       setAnalyzing(false)
+      const qCount = data?.total_questions || data?.questions?.length || 10
+      const perQMin = Number((parsedDur / qCount).toFixed(2))
       onAnalysisComplete({
         ...data,
         title: quizTitle.trim() || (file ? file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ') : 'Imported Quiz'),
-        timePerQMin: Number(timePerQ) || 5,
-        timePerQ: (Number(timePerQ) || 5) * 60,
+        totalDurationMinutes: Number(Number(parsedDur).toFixed(2)),
+        timePerQMin: perQMin,
+        timePerQ: Math.round(perQMin * 60),
         solutionPdf,
         solutionPdfName,
         configuredSections: sections,
@@ -302,16 +316,17 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
           </div>
           <div>
             <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
-              Minutes / Question
+              Total Quiz Duration (minutes)
             </label>
             <input
               type="number"
-              min="1"
-              max="60"
+              min="0.01"
+              step="0.01"
               className="inp"
-              value={timePerQ}
-              onChange={(e) => setTimePerQ(Math.max(1, parseInt(e.target.value) || 1))}
+              value={totalDuration}
+              onChange={(e) => setTotalDuration(e.target.value)}
               disabled={analyzing}
+              placeholder="e.g. 60.00"
               style={{ width: '100%' }}
             />
           </div>

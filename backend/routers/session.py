@@ -3,7 +3,11 @@ Session Router — quiz rooms, attempts, leaderboard, analytics.
 After every submit, broadcasts leaderboard update via WebSocket.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from sqlalchemy.orm import selectinload
+import re
 from database.config import get_db
 from schemas.session import (
     SessionCreate, SessionOut, JoinSessionRequest,
@@ -17,9 +21,10 @@ from crud.session import (
 )
 from crud.quiz import get_quiz
 from utils.dependencies import require_admin, get_current_user
-from models.all_models import User, SessionStatus, UserRole
+from models.all_models import User, SessionStatus, UserRole, AttemptStatus, Attempt
 from services.llm_service import resolve_unset_answers
 from services.analytics_service import get_session_analytics
+from services.response_sheet_service import generate_response_sheet_pdf
 from websocket.manager import manager
 from websocket.events import evt_leaderboard, evt_student_submitted, evt_quiz_started, evt_quiz_ended
 from datetime import datetime, timezone, timedelta
@@ -92,19 +97,40 @@ async def submit(
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    if session.status == SessionStatus.completed:
-        raise HTTPException(status_code=400, detail="This session has already ended.")
-
-    # The student MUST have already joined this room via a valid room code
-    # (POST /sessions/join). We never silently create an attempt here —
-    # otherwise any authenticated student could submit against any
-    # session_id without ever knowing/entering the room code.
     attempt = await get_attempt(db, session_id, user.id)
     if not attempt:
         raise HTTPException(
             status_code=403,
             detail="You must join this room with a valid room code before submitting.",
         )
+
+    # Idempotent response: If the attempt has already been submitted, return existing result
+    if attempt.status != AttemptStatus.in_progress:
+        quiz = await get_quiz(db, session.quiz_id)
+        attempt, results = await submit_attempt(db, attempt.id, data, quiz.questions, auto=auto)
+        return AttemptResultOut(
+            id=attempt.id,
+            session_id=attempt.session_id,
+            student_id=attempt.student_id,
+            score=attempt.score,
+            total_marks=attempt.total_marks,
+            accuracy=attempt.accuracy,
+            correct_count=attempt.correct_count,
+            incorrect_count=attempt.incorrect_count,
+            skipped_count=attempt.skipped_count,
+            marked_count=attempt.marked_count,
+            total_questions=len(quiz.questions),
+            attempted_count=attempt.correct_count + attempt.incorrect_count,
+            status=attempt.status,
+            started_at=attempt.started_at,
+            submitted_at=attempt.submitted_at,
+            time_taken_sec=attempt.time_taken_sec,
+            rank=attempt.rank,
+            results=[AnswerResultOut(**r) for r in results],
+        )
+
+    if session.status == SessionStatus.completed:
+        raise HTTPException(status_code=400, detail="This session has already ended.")
 
     quiz    = await get_quiz(db, session.quiz_id)
     questions = quiz.questions
@@ -195,6 +221,102 @@ async def my_attempts_alias(
 ):
     """Alias for /attempts/my."""
     return await get_student_attempts(db, user.id)
+
+
+@router.get("/attempts/{attempt_id}/response-sheet-pdf")
+async def get_response_sheet_pdf(
+    attempt_id: str,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Generate and stream an authoritative student response-sheet PDF in memory.
+    PDF is generated on-demand without any permanent file storage.
+    Available ONLY while the quiz and attempt still exist.
+    Students can download ONLY their own response sheet.
+    """
+    # 1. Fetch attempt with answers
+    att_res = await db.execute(
+        select(Attempt)
+        .options(selectinload(Attempt.answers))
+        .where(Attempt.id == attempt_id)
+    )
+    attempt = att_res.scalar_one_or_none()
+    if not attempt:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quiz attempt not found or has been deleted"
+        )
+
+    # 2. Authorization check: Student can only download their own attempt
+    if user.role != UserRole.admin and attempt.student_id != user.id:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Forbidden: You can only download your own response sheet"
+        )
+
+    # 3. Check session
+    session = await get_session_by_id(db, attempt.session_id)
+    if not session:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quiz session not found or has been deleted"
+        )
+
+    # 4. Check quiz exists (critical rule: deleted quiz makes PDF return 404)
+    quiz = await get_quiz(db, session.quiz_id)
+    if not quiz:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The associated quiz has been deleted and its response sheet is no longer accessible"
+        )
+
+    # 5. Fetch student user info if downloaded by admin, or use current user
+    student_user = user
+    if attempt.student_id != user.id:
+        student_res = await db.execute(
+            select(User).where(User.id == attempt.student_id)
+        )
+        found_student = student_res.scalar_one_or_none()
+        if found_student:
+            student_user = found_student
+
+    # 6. Count total participants in this session
+    participants_res = await db.execute(
+        select(Attempt.id).where(
+            Attempt.session_id == attempt.session_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+    )
+    participants_count = len(participants_res.scalars().all())
+
+    # 7. Generate in-memory PDF bytes
+    try:
+        pdf_bytes = generate_response_sheet_pdf(
+            attempt=attempt,
+            quiz=quiz,
+            student_user=student_user,
+            total_participants=max(1, participants_count),
+        )
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate response sheet PDF: {str(e)}"
+        )
+
+    # 8. Stream response as attachment
+    safe_title = re.sub(r"[^a-zA-Z0-9_\-]", "_", quiz.title)[:30] or "quiz"
+    filename = f"response_sheet_{safe_title}_{attempt.id[:8]}.pdf"
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+        },
+    )
 
 
 @router.get("/{session_id}/leaderboard", response_model=List[LeaderboardEntryOut])

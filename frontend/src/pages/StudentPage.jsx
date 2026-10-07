@@ -6,9 +6,12 @@ import Results from '../components/Quiz/Results.jsx'
 import WaitingRoom from '../components/Quiz/WaitingRoom.jsx'
 import AnalyticsDashboard from '../components/Admin/Analytics/AnalyticsDashboard.jsx'
 import CelebrationOverlay from '../components/Quiz/CelebrationOverlay.jsx'
+import NoticeBoard from '../components/Notice/NoticeBoard.jsx'
+import PasswordInput from '../components/Common/PasswordInput.jsx'
 import { useRoom } from '../hooks/useRoom.js'
 import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
 import { startQuizAttempt } from '../services/quizService.js'
+import { login as apiLogin } from '../services/authService.js'
 
 function formatIST(dateStr) {
   if (!dateStr) return ''
@@ -33,6 +36,7 @@ export default function StudentPage({
   activeQuiz, currentResult,
   attempts, setAttempts,
   viewingAttempt, setViewingAttempt,
+  unreadCount = 0, onMarkNoticesRead,
   onTake, onResult, onLogout,
 }) {
   const [session, setSession] = useState(null)
@@ -49,6 +53,48 @@ export default function StudentPage({
   const [celebrationResult, setCelebrationResult] = useState(null)
   const [pendingResultsData, setPendingResultsData] = useState(null)
 
+  // Session expired recovery state
+  const [showSessionExpired, setShowSessionExpired] = useState(false)
+  const [reauthPassword, setReauthPassword] = useState('')
+  const [reauthError, setReauthError] = useState(null)
+  const [reauthLoading, setReauthLoading] = useState(false)
+
+  // Track active quiz session for authentication interceptors
+  useEffect(() => {
+    if (screen === 'quiz' && session?.id) {
+      sessionStorage.setItem('quizee_active_quiz', 'true')
+      sessionStorage.setItem('quizee_active_session_id', session.id)
+    } else {
+      sessionStorage.removeItem('quizee_active_quiz')
+      sessionStorage.removeItem('quizee_active_session_id')
+    }
+  }, [screen, session])
+
+  // Listen for session expiration events during active quiz
+  useEffect(() => {
+    const handleExpired = () => {
+      setShowSessionExpired(true)
+    }
+    window.addEventListener('auth:session-expired', handleExpired)
+    return () => window.removeEventListener('auth:session-expired', handleExpired)
+  }, [])
+
+  const handleReauth = async (e) => {
+    e?.preventDefault()
+    if (!reauthPassword) return
+    setReauthLoading(true)
+    setReauthError(null)
+    try {
+      await apiLogin({ email: user.email, password: reauthPassword })
+      setShowSessionExpired(false)
+      setReauthPassword('')
+    } catch (err) {
+      setReauthError(err?.response?.data?.detail || 'Invalid password. Please try again.')
+    } finally {
+      setReauthLoading(false)
+    }
+  }
+
   // Load student's attempts from the database on mount
   const loadAttempts = async () => {
     try {
@@ -60,6 +106,7 @@ export default function StudentPage({
           quizTitle: item.quiz_title || item.quizTitle,
           quizId: item.quiz_id || item.quizId,
           sessionId: item.session_id,
+          session_id: item.session_id,
           score: item.score,
           total_marks: item.total_marks,
           totalQ: item.questions?.length || item.total_questions || 0,
@@ -102,6 +149,19 @@ export default function StudentPage({
   useEffect(() => {
     loadAttempts()
   }, [])
+
+  // Load leaderboard when inspecting attempt from history
+  useEffect(() => {
+    const sId = viewingAttempt?.session_id || viewingAttempt?.sessionId
+    if (screen === 'historyDetail' && sId) {
+      getLeaderboard(sId)
+        .then(lb => setLeaderboard(lb || []))
+        .catch(err => {
+          console.error('Failed to load leaderboard for attempt:', err)
+          setLeaderboard([])
+        })
+    }
+  }, [screen, viewingAttempt?.session_id, viewingAttempt?.sessionId])
 
   const room = useRoom(session?.room_code)
 
@@ -162,8 +222,8 @@ export default function StudentPage({
       attemptResult = await submitAttempt(session.id, payload, totalTimeSpent, auto)
     } catch (e) {
       console.error('Submit to backend failed', e)
-      alert(e?.response?.data?.detail || 'Failed to submit your quiz. Please try again.')
-      return
+      // Re-throw so QuizAttempt knows submit failed, preserves answers, and allows retry
+      throw e
     }
 
     // Backend is the authoritative source of truth for evaluation, scores, and review statuses
@@ -306,7 +366,9 @@ export default function StudentPage({
           <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>DURATION</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>
-              ~{Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min
+              {instructionTarget.total_duration_minutes != null
+                ? `${Number(instructionTarget.total_duration_minutes).toFixed(2)} min`
+                : `~${Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min`}
             </div>
           </div>
           <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: 12, border: '1px solid #a7f3d0', textAlign: 'center' }}>
@@ -403,12 +465,21 @@ export default function StudentPage({
         attempts={attempts}
         histCount={attempts.length}
         onViewAttempt={a => { setViewingAttempt(a); setScreen('historyDetail') }}
+        unreadCount={unreadCount}
+        onOpenNotices={() => setScreen('notices')}
       />
       {instructionModal}
       {celebrationResult && (
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
     </>
+  )
+
+  if (screen === 'notices') return (
+    <NoticeBoard
+      onBack={() => setScreen('home')}
+      onMarkedRead={onMarkNoticesRead}
+    />
   )
 
   if (screen === 'analytics' && analyticsQuiz) return (
@@ -424,6 +495,51 @@ export default function StudentPage({
       {celebrationResult && (
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
+      {showSessionExpired && (
+        <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.78)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:500 }}>
+          <div style={{ background:'#fff',borderRadius:20,padding:'2rem',maxWidth:420,width:'90%',boxShadow:'0 20px 60px rgba(0,0,0,.3)' }}>
+            <div style={{ fontSize:40, textAlign:'center', marginBottom:12 }}>🔒</div>
+            <h3 style={{ margin:'0 0 8px', fontSize:19, fontWeight:800, textAlign:'center' }}>Session Expired</h3>
+            <p style={{ color:'#4b5563', fontSize:13, textAlign:'center', margin:'0 0 16px', lineHeight:1.5 }}>
+              Your login session expired, but <strong>all your selected answers are safely preserved</strong>. Please enter your password to re-authenticate and submit your test.
+            </p>
+            {reauthError && (
+              <div style={{ background:'#fee2e2',color:'#991b1b',padding:'8px 12px',borderRadius:8,fontSize:12,marginBottom:12,fontWeight:600 }}>
+                {reauthError}
+              </div>
+            )}
+            <form onSubmit={handleReauth}>
+              <div style={{ marginBottom:14 }}>
+                <label style={{ display:'block',fontSize:12,fontWeight:700,color:'#374151',marginBottom:4 }}>Account Email</label>
+                <input
+                  type="email"
+                  value={user?.email || ''}
+                  disabled
+                  style={{ width:'100%',padding:'9px 12px',borderRadius:8,border:'1px solid #d1d5db',background:'#f3f4f6',color:'#6b7280',fontSize:13,boxSizing:'border-box' }}
+                />
+              </div>
+              <div style={{ marginBottom:18 }}>
+                <label style={{ display:'block',fontSize:12,fontWeight:700,color:'#374151',marginBottom:4 }}>Password</label>
+                <PasswordInput
+                  placeholder="Enter your password"
+                  value={reauthPassword}
+                  onChange={e => setReauthPassword(e.target.value)}
+                  required
+                  autoFocus
+                />
+              </div>
+              <button
+                type="submit"
+                className="btn-pri"
+                style={{ width:'100%',padding:'11px',borderRadius:10,fontSize:14,fontWeight:700 }}
+                disabled={reauthLoading}
+              >
+                {reauthLoading ? 'Verifying...' : 'Re-login & Continue'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
     </>
   )
 
@@ -438,6 +554,7 @@ export default function StudentPage({
       result={currentResult}
       leaderboard={leaderboard}
       currentUserId={user?.id}
+      currentUserName={user?.name}
       onBack={() => setScreen('home')}
       onHome={() => setScreen('home')}
     />
@@ -462,6 +579,8 @@ export default function StudentPage({
         solution_pdf_name: viewingAttempt.solution_pdf_name,
       }}
       result={{
+        id: viewingAttempt.id,
+        attempt_id: viewingAttempt.id,
         answers: viewingAttempt.answers,
         score: viewingAttempt.score,
         total_marks: viewingAttempt.total_marks,
@@ -482,6 +601,9 @@ export default function StudentPage({
         solution_pdf_name: viewingAttempt.solution_pdf_name,
         questions: viewingAttempt.questions || [],
       }}
+      leaderboard={leaderboard}
+      currentUserId={user?.id}
+      currentUserName={user?.name}
       onBack={() => setScreen('history')}
       onHome={() => setScreen('home')}
     />

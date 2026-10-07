@@ -1,8 +1,9 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { useAuth } from './context/AuthContext.jsx'
 import LoginScreen  from './pages/LoginScreen.jsx'
 import AdminPage    from './pages/AdminPage.jsx'
 import StudentPage  from './pages/StudentPage.jsx'
+import { getUnreadNoticeCount } from './services/noticeService.js'
 
 export default function App() {
   const { user, loading, logout } = useAuth()
@@ -12,6 +13,28 @@ export default function App() {
   const [currentResult, setCurrentResult]  = useState(null)
   const [attempts,      setAttempts]       = useState([])
   const [viewingAttempt,setViewingAttempt] = useState(null)
+  const [unreadNoticesCount, setUnreadNoticesCount] = useState(0)
+
+  const fetchUnreadCount = useCallback(async () => {
+    if (user?.role === 'student') {
+      try {
+        const count = await getUnreadNoticeCount()
+        setUnreadNoticesCount(count || 0)
+      } catch {
+        // Silently ignore if not authorized or network issue
+      }
+    }
+  }, [user])
+
+  useEffect(() => {
+    if (user?.role === 'student') {
+      fetchUnreadCount()
+      const timer = setInterval(fetchUnreadCount, 30000)
+      return () => clearInterval(timer)
+    } else {
+      setUnreadNoticesCount(0)
+    }
+  }, [user, fetchUnreadCount])
 
   const handleLogout = useCallback(async () => {
     await logout()
@@ -59,6 +82,57 @@ export default function App() {
               <span style={{ fontWeight:600 }}>{user.name}</span>
               <span className={`tag ${user.role==='admin'?'tag-purple':'tag-green'}`} style={{ fontSize:10 }}>{user.role}</span>
             </div>
+
+            {user.role === 'student' && (
+              <button
+                id="navbar-notice-bell"
+                onClick={() => setScreen('notices')}
+                style={{
+                  position: 'relative',
+                  background: screen === 'notices' ? '#ede9fe' : '#f3f4f6',
+                  border: screen === 'notices' ? '1px solid #c7d2fe' : '1px solid #e5e7eb',
+                  borderRadius: 10,
+                  padding: '5px 9px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 16,
+                  transition: 'all 0.2s',
+                  color: '#374151',
+                  marginRight: 2
+                }}
+                title={unreadNoticesCount > 0 ? `${unreadNoticesCount} unread notices` : "Notice Board"}
+              >
+                🔔
+                {unreadNoticesCount > 0 && (
+                  <span
+                    id="navbar-notice-badge"
+                    style={{
+                      position: 'absolute',
+                      top: -5,
+                      right: -6,
+                      background: '#ef4444',
+                      color: '#fff',
+                      fontSize: 10,
+                      fontWeight: 800,
+                      borderRadius: 10,
+                      minWidth: 16,
+                      height: 16,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 4px',
+                      boxShadow: '0 2px 5px rgba(239,68,68,0.4)',
+                      lineHeight: 1
+                    }}
+                  >
+                    {unreadNoticesCount}
+                  </span>
+                )}
+              </button>
+            )}
+
             {screen !== 'home' && screen !== 'quiz' && (
               <button className="btn-sec" style={{ fontSize:12,padding:'5px 11px' }} onClick={() => setScreen('home')}>Home</button>
             )}
@@ -85,6 +159,11 @@ export default function App() {
           setAttempts={setAttempts}
           viewingAttempt={viewingAttempt}
           setViewingAttempt={setViewingAttempt}
+          unreadCount={unreadNoticesCount}
+          onMarkNoticesRead={() => {
+            setUnreadNoticesCount(0)
+            fetchUnreadCount()
+          }}
           onTake={takequiz}
           onResult={handleResult}
           onLogout={handleLogout}

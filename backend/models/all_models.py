@@ -120,6 +120,7 @@ class Quiz(Base):
     creator_id     : Mapped[str]        = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     status         : Mapped[QuizStatus] = mapped_column( String(20), default=QuizStatus.draft.value, nullable=False)
     time_per_q_sec : Mapped[int]        = mapped_column(Integer, default=300, nullable=False)  # seconds
+    total_duration_minutes: Mapped[float|None] = mapped_column(Float, nullable=True) # Authoritative total quiz duration in minutes (max 2 decimals)
     total_marks    : Mapped[float]      = mapped_column(Float, default=0.0, nullable=False)     # auto-computed
     is_public      : Mapped[bool]       = mapped_column(Boolean, default=False, nullable=False)
     tags           : Mapped[list|None]  = mapped_column(JSON, nullable=True)     # ["math","algebra"]
@@ -132,6 +133,21 @@ class Quiz(Base):
     availability_end  : Mapped[datetime|None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    @property
+    def effective_total_duration_minutes(self) -> float:
+        """Returns authoritative total duration in minutes (2 decimals), falling back to time_per_q_sec for legacy quizzes."""
+        if self.total_duration_minutes is not None:
+            return round(self.total_duration_minutes, 2)
+        total_q = len(self.questions) if self.questions else 1
+        return round((self.time_per_q_sec * total_q) / 60.0, 2)
+
+    @property
+    def time_per_question_min(self) -> float:
+        """Returns per-question duration in minutes (2 decimals)."""
+        tot = self.effective_total_duration_minutes
+        total_q = len(self.questions) if self.questions else 1
+        return round(tot / total_q, 2)
 
     # relationships
     creator   : Mapped["User"]              = relationship("User", back_populates="quizzes")
@@ -336,3 +352,54 @@ class Explanation(Base):
     updated_at   : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     question : Mapped["Question"] = relationship("Question", back_populates="explanations")
+
+
+# ── Notice Board ──────────────────────────────────────────────────────────────
+
+class NoticePriority(str, enum.Enum):
+    low    = "low"
+    medium = "medium"
+    high   = "high"
+    urgent = "urgent"
+
+
+class Notice(Base):
+    """
+    Admin-published announcements / notices for students.
+    """
+    __tablename__ = "notices"
+
+    id             : Mapped[str]           = mapped_column(String(36), primary_key=True, default=new_uuid)
+    title          : Mapped[str]           = mapped_column(String(255), nullable=False)
+    content        : Mapped[str]           = mapped_column(Text, nullable=False)
+    priority       : Mapped[str]           = mapped_column(String(20), default=NoticePriority.medium.value, nullable=False)
+    is_active      : Mapped[bool]          = mapped_column(Boolean, default=True, nullable=False, index=True)
+    pinned         : Mapped[bool]          = mapped_column(Boolean, default=False, nullable=False, index=True)
+    creator_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    attachment_url : Mapped[str|None]      = mapped_column(String(1000), nullable=True)
+    attachment_name: Mapped[str|None]      = mapped_column(String(255), nullable=True)
+    expires_at     : Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
+    created_at     : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    updated_at     : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    creator : Mapped["User"] = relationship("User")
+    reads   : Mapped[list["NoticeRead"]] = relationship("NoticeRead", back_populates="notice", cascade="all, delete-orphan")
+
+
+class NoticeRead(Base):
+    """
+    Per-student read receipt tracking for notices.
+    """
+    __tablename__ = "notice_reads"
+
+    id         : Mapped[str]      = mapped_column(String(36), primary_key=True, default=new_uuid)
+    notice_id  : Mapped[str]      = mapped_column(String(36), ForeignKey("notices.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id    : Mapped[str]      = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    read_at    : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    notice : Mapped["Notice"] = relationship("Notice", back_populates="reads")
+    user   : Mapped["User"]   = relationship("User")
+
+    __table_args__ = (
+        UniqueConstraint("notice_id", "user_id", name="uq_notice_user_read"),
+    )

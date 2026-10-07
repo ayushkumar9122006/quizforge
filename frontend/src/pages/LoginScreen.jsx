@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { sendForgotOtp, verifyForgotOtp, resetPasswordWithOtp } from '../services/authService.js'
+import PasswordInput from '../components/Common/PasswordInput.jsx'
 
 export default function LoginScreen() {
   const { login, register } = useAuth()
@@ -340,9 +341,7 @@ export default function LoginScreen() {
               <div style={{ display: 'grid', gap: 14 }}>
                 <div>
                   <label className="lbl">New Password</label>
-                  <input
-                    className="inp"
-                    type="password"
+                  <PasswordInput
                     value={newPassword}
                     onChange={e => setNewPassword(e.target.value)}
                     placeholder="Min 6 characters"
@@ -352,9 +351,7 @@ export default function LoginScreen() {
 
                 <div>
                   <label className="lbl">Confirm New Password</label>
-                  <input
-                    className="inp"
-                    type="password"
+                  <PasswordInput
                     value={confirmPassword}
                     onChange={e => setConfirmPassword(e.target.value)}
                     placeholder="Repeat new password"
@@ -464,8 +461,12 @@ export default function LoginScreen() {
                 </button>
               )}
             </div>
-            <input className="inp" type="password" value={form.password} onChange={e=>up('password',e.target.value)}
-              placeholder="Min 6 characters" onKeyDown={e=>e.key==='Enter'&&handleSubmit()} />
+            <PasswordInput
+              value={form.password}
+              onChange={e => up('password', e.target.value)}
+              placeholder="Min 6 characters"
+              onKeyDown={e => e.key === 'Enter' && handleSubmit()}
+            />
           </div>
         </div>
 

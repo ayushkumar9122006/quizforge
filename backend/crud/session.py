@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from models.all_models import (
     QuizSession, Attempt, Answer, LeaderboardEntry,
     SessionStatus, AttemptStatus, Question
@@ -8,6 +9,7 @@ from models.all_models import (
 from schemas.session import AttemptSubmit
 from datetime import datetime
 from typing import Optional, List
+import asyncio
 import random
 import string
 
@@ -112,7 +114,10 @@ async def submit_attempt(
     questions: List[Question],
     auto: bool = False,
 ) -> tuple[Attempt, list[dict]]:
-    result = await db.execute(select(Attempt).where(Attempt.id == attempt_id))
+    # 1. Lock the attempt row with SELECT ... FOR UPDATE to serialize concurrent submissions
+    result = await db.execute(
+        select(Attempt).where(Attempt.id == attempt_id).with_for_update()
+    )
     attempt = result.scalar_one_or_none()
     if not attempt:
         raise ValueError("Attempt not found")
@@ -129,16 +134,21 @@ async def submit_attempt(
         for a in existing.scalars().all():
             q = q_lookup.get(a.question_id)
             existing_results.append({
-                "question_id":     a.question_id,
-                "selected_option": a.selected_option,
-                "correct_answer":  q.correct_answer if q else None,
-                "is_correct":      a.is_correct,
-                "marks_awarded":   a.marks_awarded,
+                "question_id":       a.question_id,
+                "selected_option":   a.selected_option,
+                "response_text":     getattr(a, "response_text", None),
+                "marked_for_review": getattr(a, "marked_for_review", False),
+                "correct_answer":    q.correct_answer if q else None,
+                "is_correct":        a.is_correct,
+                "marks_awarded":     a.marks_awarded,
             })
         return attempt, existing_results
 
     # Build question lookup
     q_map = {q.id: q for q in questions}
+
+    # Atomically clear any existing Answer rows for this attempt before inserting
+    await db.execute(delete(Answer).where(Answer.attempt_id == attempt_id))
 
     score = 0.0
     total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
@@ -215,7 +225,39 @@ async def submit_attempt(
     attempt.status = AttemptStatus.auto_submitted if auto else AttemptStatus.submitted
     attempt.submitted_at = datetime.utcnow()
     attempt.time_taken_sec = submission.time_taken_sec
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Concurrent submit race resolved by database unique constraint:
+        # Re-query the committed attempt and return its existing results idempotently
+        await db.rollback()
+        existing_att = None
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await db.rollback()
+            db.expire_all()
+            existing_att = (await db.execute(select(Attempt).where(Attempt.id == attempt_id))).scalar_one_or_none()
+            if existing_att and existing_att.status != AttemptStatus.in_progress:
+                break
+        if existing_att:
+            q_lookup = {q.id: q for q in questions}
+            existing = await db.execute(
+                select(Answer).where(Answer.attempt_id == attempt_id)
+            )
+            existing_results = []
+            for a in existing.scalars().all():
+                q = q_lookup.get(a.question_id)
+                existing_results.append({
+                    "question_id":       a.question_id,
+                    "selected_option":   a.selected_option,
+                    "response_text":     getattr(a, "response_text", None),
+                    "marked_for_review": getattr(a, "marked_for_review", False),
+                    "correct_answer":    q.correct_answer if q else None,
+                    "is_correct":        a.is_correct,
+                    "marks_awarded":     a.marks_awarded,
+                })
+            return existing_att, existing_results
+        raise
 
     # Update leaderboard
     existing_lb = await db.execute(
@@ -254,6 +296,7 @@ async def submit_attempt(
 
     # Recompute all ranks for this session with deterministic tie breaking
     await _recompute_ranks(db, attempt.session_id)
+    await db.commit()
     return attempt, answer_results
 
 
@@ -295,6 +338,17 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
             deadline = min(deadline, end_tz)
 
         if now >= deadline:
+            saved_answers = att.answers or []
+            if not saved_answers:
+                # SAFETY: If no answers were ever saved to the database, do not immediately
+                # auto-submit with answers=[] within a 30-minute grace window of the deadline.
+                # This protects students whose submit failed due to token expiration or network drop,
+                # allowing them to log back in and submit the answers preserved in their browser.
+                # Only if the attempt is expired by more than 30 minutes (abandoned attempt)
+                # do we finalize it.
+                if now < deadline + timedelta(minutes=30):
+                    continue
+
             sub = AttemptSubmit(
                 answers=[
                     AnswerSubmit(
@@ -304,7 +358,7 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
                         response_text=a.response_text,
                         time_taken_sec=a.time_taken_sec or 0,
                     )
-                    for a in (att.answers or [])
+                    for a in saved_answers
                 ],
                 time_taken_sec=min(int((now - started_at).total_seconds()), int((deadline - started_at).total_seconds())),
             )
