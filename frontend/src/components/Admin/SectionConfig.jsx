@@ -3,7 +3,8 @@ import { uid } from '../../services/utils.js'
 
 export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
   const [title, setTitle] = useState('')
-  const [timePerQ, setTimePerQ] = useState(5)
+  const [totalDuration, setTotalDuration] = useState('60.00')
+  const [durationError, setDurationError] = useState('')
   const [posMarks, setPosMarks] = useState(4)
   const [negMarks, setNegMarks] = useState(1)
   const [instructions, setInstructions] = useState(
@@ -100,9 +101,29 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
     }
   }
 
+  const numQuestions = totalQ || 1
+  const parsedDuration = parseFloat(totalDuration)
+  const isPositive = !isNaN(parsedDuration) && parsedDuration > 0
+  const decimalParts = String(totalDuration).split('.')
+  const decimalCount = decimalParts.length > 1 ? decimalParts[1].length : 0
+  const hasValidPrecision = decimalCount <= 2
+  const isValidDuration = isPositive && hasValidPrecision
+
+  const perQuestionMin = isValidDuration
+    ? (parsedDuration / numQuestions).toFixed(2)
+    : '0.00'
+
   const build = () => {
     if (!title.trim()) { alert('Enter a quiz title.'); return }
     if (totalQ < 1) { alert('Add at least 1 question.'); return }
+    if (!isPositive) {
+      alert('Total Quiz Duration must be greater than 0 minutes.')
+      return
+    }
+    if (!hasValidPrecision) {
+      alert('Total Quiz Duration cannot have more than 2 decimal places.')
+      return
+    }
 
     let startIso = null
     let endIso = null
@@ -134,7 +155,7 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
     onDone(
       questions,
       title,
-      timePerQ * 60,
+      Number(Number(parsedDuration).toFixed(2)),
       instructions,
       solutionPdf,
       solutionPdfName,
@@ -199,12 +220,41 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
           <input className="inp" value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. JEE Advanced Physics — Thermodynamics" />
         </div>
         <div>
-          <label className="lbl">Minutes per question (Individual Attempt Duration)</label>
-          <input type="number" className="inp" min={1} max={30} value={timePerQ}
-            onChange={e => setTimePerQ(Math.max(1, +e.target.value))} style={{ width: 140 }} />
-          <span style={{ fontSize: 12, color: '#6b7280', marginLeft: 10 }}>
-            Total test duration: ~{timePerQ * totalQ} minutes
-          </span>
+          <label className="lbl">Total Quiz Duration (minutes)</label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <input
+              type="number"
+              className="inp"
+              min="0.01"
+              step="0.01"
+              value={totalDuration}
+              onChange={e => {
+                const val = e.target.value
+                setTotalDuration(val)
+                const parts = val.split('.')
+                if (parts.length > 1 && parts[1].length > 2) {
+                  setDurationError('Maximum 2 decimal places allowed')
+                } else if (parseFloat(val) <= 0) {
+                  setDurationError('Duration must be greater than 0')
+                } else {
+                  setDurationError('')
+                }
+              }}
+              style={{ width: 140, borderColor: durationError ? '#ef4444' : undefined }}
+              placeholder="e.g. 60.00"
+            />
+            <div style={{ fontSize: 13, color: '#4f46e5', fontWeight: 700 }}>
+              ⏱ Time per question: <strong>{perQuestionMin} min/q</strong>
+              <span style={{ fontSize: 12, color: '#6b7280', fontWeight: 400, marginLeft: 6 }}>
+                ({Number(parsedDuration || 0).toFixed(2)} min ÷ {numQuestions} questions)
+              </span>
+            </div>
+          </div>
+          {durationError && (
+            <div style={{ fontSize: 11, color: '#dc2626', fontWeight: 700, marginTop: 4 }}>
+              ⚠️ {durationError}
+            </div>
+          )}
         </div>
       </div>
 

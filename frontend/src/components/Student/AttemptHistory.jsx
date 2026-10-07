@@ -1,5 +1,6 @@
 import { formatDuration } from '../../services/utils.js'
 import { viewSolutionPdf } from '../../services/quizService.js'
+import { downloadResponseSheetPdf } from '../../services/sessionService.js'
 
 function formatIST(dateStr) {
   if (!dateStr) return 'N/A'
@@ -136,6 +137,21 @@ export default function AttemptHistory({ attempts = [], onDelete, onView, onBack
                     <span>Solution PDF</span>
                   </button>
                 )}
+                <button
+                  className="btn-sec"
+                  style={{ fontSize: 12, padding: '7px 12px', color: '#4338ca', borderColor: '#c7d2fe', background: '#eef2ff', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 5 }}
+                  onClick={async () => {
+                    try {
+                      await downloadResponseSheetPdf(a.id, a.quizTitle || a.quiz_title)
+                    } catch (err) {
+                      alert(err.response?.data?.detail || 'Failed to download response sheet PDF.')
+                    }
+                  }}
+                  title="Download your official response sheet PDF"
+                >
+                  <span>📥</span>
+                  <span>Response Sheet</span>
+                </button>
                 <button
                   className="btn-pri"
                   style={{ fontSize: 13, padding: '7px 16px', fontWeight: 800 }}

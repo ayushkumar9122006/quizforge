@@ -13,6 +13,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
 
   const storageDeadlineKey = `quizee_attempt_${quiz.id}_deadline`
   const storageAnswersKey  = `quizee_attempt_${quiz.id}_answers`
+  const storageTabSwitchesKey = `quizee_attempt_${quiz.id}_tab_switches`
 
   const getTargetDeadlineMs = () => {
     if (quiz.effectiveDeadline) {
@@ -40,7 +41,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
 
   const [answers,  setAnswers]  = useState(() => {
     try {
-      const raw = localStorage.getItem(storageAnswersKey)
+      const raw = localStorage.getItem(storageAnswersKey) || sessionStorage.getItem(storageAnswersKey)
       return raw ? JSON.parse(raw) : {}
     } catch { return {} }
   })
@@ -51,24 +52,56 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   const [marked,   setMarked]   = useState(new Set())
   const [palette,  setPalette]  = useState(false)
   const [lightbox, setLightbox] = useState(null)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [submitError,  setSubmitError]  = useState(null)
+
+  // ── Tab Switch / Strike Monitoring (3 violations max) ──
+  const [tabSwitchCount, setTabSwitchCount] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem(storageTabSwitchesKey)
+      return saved ? Math.min(3, Math.max(0, parseInt(saved, 10) || 0)) : 0
+    } catch { return 0 }
+  })
+  const [tabWarningModal, setTabWarningModal] = useState(null)
 
   const [qTimes,   setQTimes]   = useState({})
   const [totalSpent, setTotalSpent] = useState(0)
   const [lastVisitedPerSec, setLastVisitedPerSec] = useState({})
 
-  const answersRef    = useRef(answers)
-  const markedRef     = useRef(marked)
-  const qTimesRef     = useRef(qTimes)
-  const totalSpentRef = useRef(totalSpent)
-  const curRef        = useRef(cur)
-  const submittedRef  = useRef(false)
+  const answersRef          = useRef(answers)
+  const markedRef           = useRef(marked)
+  const qTimesRef           = useRef(qTimes)
+  const totalSpentRef       = useRef(totalSpent)
+  const curRef              = useRef(cur)
+  const isSubmittingRef     = useRef(false)
+  const submittedRef        = useRef(false)
+  const tabSwitchCountRef   = useRef(tabSwitchCount)
+  const lastViolationTimeRef = useRef(0)
+  const isMountedRef        = useRef(false)
+  const hasLeftRef          = useRef(false)
 
   useEffect(() => {
     answersRef.current = answers
     try {
       localStorage.setItem(storageAnswersKey, JSON.stringify(answers))
+      sessionStorage.setItem(storageAnswersKey, JSON.stringify(answers))
     } catch {}
   }, [answers, storageAnswersKey])
+
+  useEffect(() => {
+    tabSwitchCountRef.current = tabSwitchCount
+    try {
+      sessionStorage.setItem(storageTabSwitchesKey, String(tabSwitchCount))
+    } catch {}
+  }, [tabSwitchCount, storageTabSwitchesKey])
+
+  // Prevent false-positive tab switches during initial component mount/hydration
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      isMountedRef.current = true
+    }, 1000)
+    return () => clearTimeout(timer)
+  }, [])
 
   useEffect(() => { markedRef.current  = marked  }, [marked])
   useEffect(() => { qTimesRef.current  = qTimes  }, [qTimes])
@@ -84,17 +117,110 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   }, [cur, questions])
 
   const doSubmit = useCallback(
-    (auto = false) => {
-      if (submittedRef.current) return
-      submittedRef.current = true
+    async (auto = false) => {
+      // Submission mutex: prevents double, triple, and race condition submits
+      if (isSubmittingRef.current || submittedRef.current) return
+      isSubmittingRef.current = true
+      setIsSubmitting(true)
+      setSubmitError(null)
+
       try {
-        localStorage.removeItem(storageDeadlineKey)
-        localStorage.removeItem(storageAnswersKey)
-      } catch {}
-      onSubmit(answersRef.current, auto, markedRef.current, qTimesRef.current, totalSpentRef.current)
+        await onSubmit(
+          answersRef.current,
+          auto,
+          markedRef.current,
+          qTimesRef.current,
+          totalSpentRef.current
+        )
+        // Mark as submitted and clean up storage only after confirmed success
+        submittedRef.current = true
+        try {
+          localStorage.removeItem(storageDeadlineKey)
+          localStorage.removeItem(storageAnswersKey)
+          sessionStorage.removeItem(storageAnswersKey)
+          sessionStorage.removeItem(storageTabSwitchesKey)
+        } catch {}
+      } catch (err) {
+        console.error('Quiz submission failed:', err)
+        // CRITICAL DATA INTEGRITY:
+        // Do NOT delete localStorage or React answers!
+        // Release the mutex so the student can retry.
+        isSubmittingRef.current = false
+        setIsSubmitting(false)
+        const msg = err?.response?.data?.detail || err?.message || 'Submission failed. Your answers are safely preserved. Click to retry.'
+        setSubmitError(msg)
+      }
     },
-    [onSubmit, storageDeadlineKey, storageAnswersKey]
+    [onSubmit, storageDeadlineKey, storageAnswersKey, storageTabSwitchesKey]
   )
+
+  // ── Centralized Tab-Switch Violation Handler ──
+  const handleTabViolation = useCallback(() => {
+    if (!isMountedRef.current) return
+    if (isSubmittingRef.current || submittedRef.current) return
+    const now = Date.now()
+    // Deduplicate rapid/overlapping events (blur + visibilitychange) within 1.5s
+    if (now - lastViolationTimeRef.current < 1500) return
+    lastViolationTimeRef.current = now
+
+    const curCount = tabSwitchCountRef.current
+    if (curCount >= 3) return
+
+    const nextCount = curCount + 1
+    tabSwitchCountRef.current = nextCount
+    setTabSwitchCount(nextCount)
+    try {
+      sessionStorage.setItem(storageTabSwitchesKey, String(nextCount))
+    } catch {}
+
+    if (nextCount === 1) {
+      setTabWarningModal({ count: 1 })
+    } else if (nextCount === 2) {
+      setTabWarningModal({ count: 2 })
+    } else if (nextCount >= 3) {
+      setTabWarningModal({ count: 3 })
+      // Auto-submit immediately using existing safe submission pipeline
+      doSubmit(true)
+    }
+  }, [doSubmit, storageTabSwitchesKey])
+
+  // ── Browser Visibility & Focus Monitoring ──
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        if (!hasLeftRef.current) {
+          hasLeftRef.current = true
+          handleTabViolation()
+        }
+      } else if (document.visibilityState === 'visible') {
+        hasLeftRef.current = false
+      }
+    }
+
+    const onWindowBlur = () => {
+      // Blur alone only counts if document actually became hidden
+      if (document.visibilityState === 'hidden') {
+        if (!hasLeftRef.current) {
+          hasLeftRef.current = true
+          handleTabViolation()
+        }
+      }
+    }
+
+    const onWindowFocus = () => {
+      hasLeftRef.current = false
+    }
+
+    document.addEventListener('visibilitychange', onVisibilityChange)
+    window.addEventListener('blur', onWindowBlur)
+    window.addEventListener('focus', onWindowFocus)
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibilityChange)
+      window.removeEventListener('blur', onWindowBlur)
+      window.removeEventListener('focus', onWindowFocus)
+    }
+  }, [handleTabViolation])
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -233,6 +359,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
           </span>
         </div>
 
+        {tabSwitchCount > 0 && (
+          <div style={{ display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:8,background:tabSwitchCount>=2?'#fee2e2':'#fef3c7',color:tabSwitchCount>=2?'#991b1b':'#92400e',fontSize:11,fontWeight:800,flexShrink:0,border:`1px solid ${tabSwitchCount>=2?'#fca5a5':'#fde68a'}` }}>
+            <span>⚠️</span>
+            <span>Tab switches: {tabSwitchCount}/3</span>
+          </div>
+        )}
+
         <button className="btn-danger" style={{ padding:'7px 15px', flexShrink:0 }} onClick={() => setConfirm(true)}>
           Submit Test
         </button>
@@ -325,13 +458,35 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
             <div style={{ flex:1, minWidth:60, height:3, background:'#f3f4f6', borderRadius:2, overflow:'hidden' }}>
               <div className="pbar-fill" style={{ height:'100%', width:`${qPct}%`, background:qPct<25?'#ef4444':qPct<50?'#f59e0b':'#6366f1', borderRadius:2 }} />
             </div>
-            <div style={{ position:'relative', flexShrink:0 }} title={`Remaining question time: ${Math.round(qTime)} sec`}>
+            <div style={{ position:'relative', flexShrink:0 }} title={`Remaining question time: ${Math.round(qTime)}s (${(qTime / 60).toFixed(2)}m)`}>
               <CircularTimer value={Math.round(qTime)} max={perQ} size={36} />
-              <div style={{ position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:10,fontWeight:800,color:qPct<25?'#dc2626':'#374151' }}>
-                {Math.round(qTime) < 60 ? `${Math.round(qTime)}s` : `${Math.ceil(Math.round(qTime)/60)}m`}
+              <div style={{ position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:8.5,fontWeight:800,color:qPct<25?'#dc2626':'#374151' }}>
+                {Math.round(qTime) < 60 ? `${Math.round(qTime)}s` : `${(qTime / 60).toFixed(2)}m`}
               </div>
             </div>
           </div>
+
+          {/* Submission Error & Retry Banner */}
+          {submitError && (
+            <div style={{ background: '#fef2f2', border: '1.5px solid #ef4444', borderRadius: 12, padding: '12px 18px', marginBottom: 14, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, maxWidth: 880, margin: '0 auto 14px', width: '100%' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 20 }}>⚠️</span>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: '#991b1b' }}>Submission Error</div>
+                  <div style={{ fontSize: 12, color: '#b91c1c' }}>{submitError} (Your answers remain safely stored).</div>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn-pri"
+                style={{ background: '#dc2626', padding: '7px 16px', fontSize: 12, whiteSpace: 'nowrap' }}
+                onClick={() => doSubmit(false)}
+                disabled={isSubmitting}
+              >
+                {isSubmitting ? 'Retrying...' : 'Retry Submit'}
+              </button>
+            </div>
+          )}
 
           {/* Unified reading-order layout: Statement -> Diagram/Figure -> Options */}
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
@@ -483,10 +638,11 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
                   <button
                     type="button"
                     className="btn-pri"
-                    style={{ flex: 1, background: '#dc2626' }}
+                    style={{ flex: 1, background: isSubmitting ? '#9ca3af' : '#dc2626', cursor: isSubmitting ? 'not-allowed' : 'pointer' }}
                     onClick={() => setConfirm(true)}
+                    disabled={isSubmitting}
                   >
-                    Submit Quiz ✓
+                    {isSubmitting ? 'Submitting...' : 'Submit Quiz ✓'}
                   </button>
                 ) : (
                   <button
@@ -515,14 +671,108 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
               <p style={{ color:'#dc2626', fontSize:13, textAlign:'center', margin:'0 0 18px' }}>⚠ {questions.length-done} unanswered</p>
             )}
             <div style={{ display:'flex', gap:9, marginTop:18 }}>
-              <button className="btn-sec" style={{ flex:1 }} onClick={() => setConfirm(false)}>Cancel</button>
+              <button className="btn-sec" style={{ flex:1 }} onClick={() => setConfirm(false)} disabled={isSubmitting}>Cancel</button>
               <button
-                style={{ flex:1,padding:'11px',borderRadius:10,background:'#ef4444',color:'#fff',border:'none',cursor:'pointer',fontSize:14,fontWeight:700 }}
+                style={{ flex:1,padding:'11px',borderRadius:10,background:isSubmitting ? '#9ca3af' : '#ef4444',color:'#fff',border:'none',cursor:isSubmitting ? 'not-allowed' : 'pointer',fontSize:14,fontWeight:700 }}
                 onClick={() => { setConfirm(false); doSubmit(false) }}
+                disabled={isSubmitting}
               >
-                Submit now
+                {isSubmitting ? 'Submitting...' : 'Submit now'}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Tab Switch Warning Modal (Strikes 1, 2, 3) ── */}
+      {tabWarningModal && (
+        <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:500,backdropFilter:'blur(4px)' }}>
+          <div style={{ background:'#fff',borderRadius:20,padding:'2rem',maxWidth:440,width:'90%',boxShadow:'0 25px 70px rgba(0,0,0,.25)',textAlign:'center' }}>
+            <div style={{ fontSize:44, marginBottom:10 }}>
+              {tabWarningModal.count >= 3 ? '🚨' : '⚠️'}
+            </div>
+
+            {tabWarningModal.count === 1 && (
+              <>
+                <div style={{ display:'inline-block',background:'#fef3c7',color:'#92400e',fontWeight:800,fontSize:11,padding:'4px 12px',borderRadius:20,marginBottom:10,letterSpacing:'0.05em',textTransform:'uppercase' }}>
+                  Violation 1 of 3
+                </div>
+                <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#111827' }}>
+                  Tab Switch Detected
+                </h3>
+                <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
+                  You navigated away from the quiz window. This is your <strong>1st warning</strong>.<br/>
+                  If you switch tabs <strong>2 more times</strong>, your quiz will be <strong>automatically submitted</strong> immediately.
+                </p>
+                <button
+                  type="button"
+                  className="btn-pri"
+                  style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700 }}
+                  onClick={() => setTabWarningModal(null)}
+                >
+                  I Understand, Return to Quiz
+                </button>
+              </>
+            )}
+
+            {tabWarningModal.count === 2 && (
+              <>
+                <div style={{ display:'inline-block',background:'#fee2e2',color:'#991b1b',fontWeight:800,fontSize:11,padding:'4px 12px',borderRadius:20,marginBottom:10,letterSpacing:'0.05em',textTransform:'uppercase' }}>
+                  Violation 2 of 3 — Final Warning
+                </div>
+                <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#b91c1c' }}>
+                  Warning: Second Tab Switch
+                </h3>
+                <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
+                  You left the quiz tab again. This is your <strong>2nd violation</strong>.<br/>
+                  <strong style={{ color:'#dc2626' }}>ONE MORE VIOLATION</strong> will immediately auto-submit your test and lock your answers.
+                </p>
+                <button
+                  type="button"
+                  className="btn-pri"
+                  style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700,background:'#dc2626' }}
+                  onClick={() => setTabWarningModal(null)}
+                >
+                  I Understand, Resume Test
+                </button>
+              </>
+            )}
+
+            {tabWarningModal.count >= 3 && (
+              <>
+                <div style={{ display:'inline-block',background:'#7f1d1d',color:'#fee2e2',fontWeight:800,fontSize:11,padding:'4px 12px',borderRadius:20,marginBottom:10,letterSpacing:'0.05em',textTransform:'uppercase' }}>
+                  Violation 3 of 3 — Auto-Submitting
+                </div>
+                <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#991b1b' }}>
+                  Test Auto-Submitted
+                </h3>
+                <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
+                  You have exceeded the maximum allowed tab switches (3/3).<br/>
+                  Your quiz is now being <strong>automatically submitted</strong>. All your completed answers are being graded.
+                </p>
+                {submitError ? (
+                  <div style={{ marginBottom:14 }}>
+                    <div style={{ color:'#dc2626',fontSize:13,fontWeight:600,marginBottom:10 }}>
+                      {submitError}
+                    </div>
+                    <button
+                      type="button"
+                      className="btn-pri"
+                      style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700,background:'#dc2626' }}
+                      onClick={() => doSubmit(true)}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? 'Submitting...' : 'Retry Auto-Submit'}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px',background:'#f3f4f6',borderRadius:10,color:'#374151',fontSize:13,fontWeight:600 }}>
+                    <span className="spinner" style={{ display:'inline-block',width:16,height:16,border:'2px solid #9ca3af',borderTopColor:'#111827',borderRadius:'50%',animation:'spin 1s linear infinite' }} />
+                    Submitting your answers securely...
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
       )}

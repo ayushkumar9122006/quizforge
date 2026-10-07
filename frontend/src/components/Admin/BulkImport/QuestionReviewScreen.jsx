@@ -48,9 +48,10 @@ export default function QuestionReviewScreen({
     metadata?.title ||
     (analysisData?.filename ? analysisData.filename.replace(/\.pdf$/i, '').replace(/_/g, ' ') : 'Imported Quiz')
   )
-  const [timePerQ, setTimePerQ] = useState(
-    analysisData?.timePerQMin ||
-    (analysisData?.timePerQ ? Math.round(analysisData.timePerQ / 60) : 5)
+  const [totalDuration, setTotalDuration] = useState(
+    analysisData?.totalDurationMinutes !== undefined && analysisData?.totalDurationMinutes !== null
+      ? String(analysisData.totalDurationMinutes)
+      : String((analysisData?.timePerQMin || (analysisData?.timePerQ ? Math.round(analysisData.timePerQ / 60) : 5)) * (questions?.length || 10))
   )
 
   const [instructions, setInstructions] = useState(
@@ -233,10 +234,29 @@ export default function QuestionReviewScreen({
       }
     }
 
+    const numQuestions = questions?.length || 1
+    const parsedDur = parseFloat(totalDuration)
+    const isPos = !isNaN(parsedDur) && parsedDur > 0
+    const decParts = String(totalDuration).split('.')
+    const decCount = decParts.length > 1 ? decParts[1].length : 0
+
+    if (!isPos) {
+      alert('Total Quiz Duration must be greater than 0 minutes.')
+      return
+    }
+    if (decCount > 2) {
+      alert('Total Quiz Duration cannot have more than 2 decimal places.')
+      return
+    }
+
+    const perQMin = (parsedDur / numQuestions).toFixed(2)
+
     const extraConfig = {
       title: quizTitle.trim() || 'Imported Quiz',
-      timePerQ: Number(timePerQ) || 5,
-      timePerQMin: Number(timePerQ) || 5,
+      total_duration_minutes: Number(Number(parsedDur).toFixed(2)),
+      totalDurationMin: Number(Number(parsedDur).toFixed(2)),
+      timePerQ: Math.round(Number(perQMin) * 60),
+      timePerQMin: Number(perQMin),
       instructions,
       solution_pdf: solutionPdf,
       solution_pdf_name: solutionPdfName,
@@ -510,19 +530,24 @@ export default function QuestionReviewScreen({
 
               <div>
                 <label style={{ fontSize: 12, fontWeight: 800, color: '#334155', display: 'block', marginBottom: 4 }}>
-                  ⏱️ Minutes per Question
+                  ⏱️ Total Quiz Duration (minutes)
                 </label>
                 <input
                   type="number"
-                  min="1"
-                  max="60"
+                  min="0.01"
+                  step="0.01"
                   className="inp"
-                  value={timePerQ}
-                  onChange={e => setTimePerQ(Math.max(1, parseInt(e.target.value) || 1))}
+                  value={totalDuration}
+                  onChange={e => setTotalDuration(e.target.value)}
                   style={{ width: '100%', fontSize: 13, boxSizing: 'border-box' }}
+                  placeholder="e.g. 60.00"
                 />
                 <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginTop: 3 }}>
-                  Total Test Duration: ~{timePerQ * questions.length} minutes ({timePerQ} min × {questions.length} questions)
+                  Per-question time: <strong>{(() => {
+                    const dur = parseFloat(totalDuration)
+                    const n = questions?.length || 1
+                    return (!isNaN(dur) && dur > 0) ? (dur / n).toFixed(2) : '0.00'
+                  })()} min/q</strong> ({Number(parseFloat(totalDuration) || 0).toFixed(2)} min ÷ {questions?.length || 1} questions)
                 </span>
               </div>
 

@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional, List, Any
+from decimal import Decimal
 from models.all_models import QuizStatus, ContentType
 
 
@@ -70,11 +71,24 @@ class QuizCreate(BaseModel):
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
     time_per_q_sec: int = Field(default=300, ge=10, le=3600)
+    total_duration_minutes: Optional[float] = None
     is_public: bool = False
     tags: Optional[List[str]] = None
     subject: Optional[str] = None
     difficulty: Optional[str] = None
     questions: List[QuestionCreate] = []
+
+    @field_validator("total_duration_minutes")
+    @classmethod
+    def validate_total_duration(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return None
+        if v <= 0:
+            raise ValueError("Total quiz duration must be greater than 0")
+        dec = Decimal(str(v))
+        if dec.as_tuple().exponent < -2:
+            raise ValueError("Total quiz duration cannot have more than 2 decimal places")
+        return float(round(dec, 2))
 
 
 class QuizUpdate(BaseModel):
@@ -86,11 +100,24 @@ class QuizUpdate(BaseModel):
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
     time_per_q_sec: Optional[int] = None
+    total_duration_minutes: Optional[float] = None
     status: Optional[QuizStatus] = None
     is_public: Optional[bool] = None
     tags: Optional[List[str]] = None
     subject: Optional[str] = None
     difficulty: Optional[str] = None
+
+    @field_validator("total_duration_minutes")
+    @classmethod
+    def validate_total_duration(cls, v: Optional[float]) -> Optional[float]:
+        if v is None:
+            return None
+        if v <= 0:
+            raise ValueError("Total quiz duration must be greater than 0")
+        dec = Decimal(str(v))
+        if dec.as_tuple().exponent < -2:
+            raise ValueError("Total quiz duration cannot have more than 2 decimal places")
+        return float(round(dec, 2))
 
 
 class QuizAvailabilityUpdate(BaseModel):
@@ -109,6 +136,8 @@ class QuizOut(BaseModel):
     availability_end: Optional[datetime] = None
     status: QuizStatus
     time_per_q_sec: int
+    total_duration_minutes: Optional[float] = None
+    time_per_question_min: Optional[float] = None
     total_marks: float
     is_public: bool
     tags: Optional[List[str]] = None
@@ -120,6 +149,21 @@ class QuizOut(BaseModel):
     questions: List[QuestionOut] = []
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def resolve_durations(self):
+        questions = getattr(self, "questions", None) or []
+        total_q = len(questions) if questions else getattr(self, "question_count", 1) or 1
+        if self.total_duration_minutes is not None:
+            self.total_duration_minutes = round(float(self.total_duration_minutes), 2)
+        else:
+            self.total_duration_minutes = round(((self.time_per_q_sec or 300) * total_q) / 60.0, 2)
+
+        if self.time_per_question_min is not None:
+            self.time_per_question_min = round(float(self.time_per_question_min), 2)
+        else:
+            self.time_per_question_min = round(self.total_duration_minutes / total_q, 2)
+        return self
 
 
 class QuestionStudentOut(BaseModel):
@@ -158,6 +202,8 @@ class QuizStudentOut(BaseModel):
     availability_end: Optional[datetime] = None
     status: QuizStatus
     time_per_q_sec: int
+    total_duration_minutes: Optional[float] = None
+    time_per_question_min: Optional[float] = None
     total_marks: float
     is_public: bool
     tags: Optional[List[str]] = None
@@ -170,6 +216,21 @@ class QuizStudentOut(BaseModel):
 
     model_config = {"from_attributes": True}
 
+    @model_validator(mode="after")
+    def resolve_durations(self):
+        questions = getattr(self, "questions", None) or []
+        total_q = len(questions) if questions else getattr(self, "question_count", 1) or 1
+        if self.total_duration_minutes is not None:
+            self.total_duration_minutes = round(float(self.total_duration_minutes), 2)
+        else:
+            self.total_duration_minutes = round(((self.time_per_q_sec or 300) * total_q) / 60.0, 2)
+
+        if self.time_per_question_min is not None:
+            self.time_per_question_min = round(float(self.time_per_question_min), 2)
+        else:
+            self.time_per_question_min = round(self.total_duration_minutes / total_q, 2)
+        return self
+
 
 class QuizListOut(BaseModel):
     id: str
@@ -180,6 +241,8 @@ class QuizListOut(BaseModel):
     solution_pdf_name: Optional[str] = None
     status: QuizStatus
     time_per_q_sec: int
+    total_duration_minutes: Optional[float] = None
+    time_per_question_min: Optional[float] = None
     total_marks: float
     subject: Optional[str] = None
     difficulty: Optional[str] = None
@@ -187,6 +250,20 @@ class QuizListOut(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @model_validator(mode="after")
+    def resolve_durations(self):
+        total_q = getattr(self, "question_count", 1) or 1
+        if self.total_duration_minutes is not None:
+            self.total_duration_minutes = round(float(self.total_duration_minutes), 2)
+        else:
+            self.total_duration_minutes = round(((self.time_per_q_sec or 300) * total_q) / 60.0, 2)
+
+        if self.time_per_question_min is not None:
+            self.time_per_question_min = round(float(self.time_per_question_min), 2)
+        else:
+            self.time_per_question_min = round(self.total_duration_minutes / total_q, 2)
+        return self
 
 
 # ── Bulk Import Schemas ────────────────────────────────────────────────────────

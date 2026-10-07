@@ -12,6 +12,7 @@ import { useRoom } from '../../hooks/useRoom.js'
 import AnalyticsDashboard from './Analytics/AnalyticsDashboard.jsx'
 import PdfUploadModal from './BulkImport/PdfUploadModal.jsx'
 import QuestionReviewScreen from './BulkImport/QuestionReviewScreen.jsx'
+import AdminNoticeManager from './AdminNoticeManager.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return 'Open / No deadline'
@@ -84,9 +85,9 @@ export default function AdminDashboard({ onLogout }) {
 
   const room = useRoom(activeSession?.room_code)
 
-  const handleConfigDone = (questions, title, timePerQ, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd) => {
+  const handleConfigDone = (questions, title, totalDurationMin, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd) => {
     setDraftQ(questions)
-    setDraftMeta({ title, timePerQ, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd })
+    setDraftMeta({ title, totalDurationMin, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd })
     setScreen('editor')
   }
 
@@ -103,8 +104,9 @@ export default function AdminDashboard({ onLogout }) {
           solution_pdf_name: solutionPdfName !== undefined ? solutionPdfName : draftMeta.solutionPdfName,
           availability_start: draftMeta.availabilityStart,
           availability_end: draftMeta.availabilityEnd,
+          total_duration_minutes: draftMeta.totalDurationMin,
         },
-        Math.round(draftMeta.timePerQ / 60)
+        draftMeta.totalDurationMin
       )
       const quiz = await createQuiz(payload)
       await publishQuiz(quiz.id)
@@ -225,6 +227,7 @@ export default function AdminDashboard({ onLogout }) {
       if (bulkTargetQuizId) {
         targetQuiz = await confirmBulkImport(bulkTargetQuizId, approvedQuestions)
       } else {
+        const totDurationMin = extraConfig?.total_duration_minutes ?? extraConfig?.totalDurationMin ?? bulkAnalysisData?.totalDurationMinutes ?? null
         const timePerQMin = extraConfig?.timePerQMin || (extraConfig?.timePerQ ? (extraConfig.timePerQ > 30 ? Math.round(extraConfig.timePerQ / 60) : extraConfig.timePerQ) : (bulkAnalysisData?.timePerQMin || 5))
         const payload = toApiFormat({
           title: extraConfig?.title || bulkAnalysisData?.title || bulkAnalysisData?.metadata?.title || 'Imported Quiz',
@@ -240,7 +243,8 @@ export default function AdminDashboard({ onLogout }) {
           availability_end: extraConfig?.availability_end !== undefined
             ? extraConfig.availability_end
             : (bulkAnalysisData?.availabilityEnd || null),
-        }, timePerQMin)
+          total_duration_minutes: totDurationMin,
+        }, totDurationMin, timePerQMin)
         const newQuiz = await createQuiz(payload)
         await publishQuiz(newQuiz.id)
         targetQuiz = newQuiz
@@ -323,6 +327,10 @@ export default function AdminDashboard({ onLogout }) {
       quiz={analyticsQuiz}
       onBack={() => setScreen('dash')}
     />
+  )
+
+  if (screen === 'notices') return (
+    <AdminNoticeManager onBack={() => setScreen('dash')} />
   )
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -451,6 +459,13 @@ export default function AdminDashboard({ onLogout }) {
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
           <button
+            className="btn-sec"
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            onClick={() => setScreen('notices')}
+          >
+            📢 Notice Board
+          </button>
+          <button
             className="btn-pri"
             style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', display: 'flex', alignItems: 'center', gap: 6 }}
             onClick={() => { setBulkTargetQuizId(null); setShowBulkModal(true) }}
@@ -502,7 +517,7 @@ export default function AdminDashboard({ onLogout }) {
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
                   <span>📝 {quiz.questions?.length ?? 0} Qs</span>
-                  <span>⏱ {Math.round((quiz.time_per_q_sec || 300) / 60)} min/q</span>
+                  <span>⏱ {quiz.total_duration_minutes != null ? `${Number(quiz.total_duration_minutes).toFixed(2)} min (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.questions?.length || 1))).toFixed(2)} min/q)` : `${Math.round((quiz.time_per_q_sec || 300) / 60)} min/q`}</span>
                   <span>📅 Created {new Date(quiz.created_at).toLocaleDateString()}</span>
                   {hasPdf && (
                     <span style={{ color: '#059669', fontWeight: 800, background: '#ecfdf5', padding: '1px 8px', borderRadius: 6, border: '1px solid #a7f3d0' }}>

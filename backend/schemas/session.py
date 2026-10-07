@@ -41,6 +41,7 @@ class AttemptSubmit(BaseModel):
 
 class LeaderboardEntryOut(BaseModel):
     rank: int
+    student_id: Optional[str] = None
     student_name: str
     score: float
     total_marks: float

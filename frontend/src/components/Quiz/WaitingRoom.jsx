@@ -48,7 +48,11 @@ export default function WaitingRoom({ session, quiz, userRole, onQuizStart, onLe
           <div style={{ fontSize:22, marginBottom:6 }}>📝</div>
           <div style={{ fontWeight:800, fontSize:16, color:'#111827', marginBottom:4 }}>{quiz?.title}</div>
           <div style={{ fontSize:13, color:'#9ca3af' }}>
-            {quiz?.questions?.length ?? 0} questions · {Math.round((quiz?.timePerQ || 300) / 60)} min/q
+            {quiz?.questions?.length ?? 0} questions · {
+              quiz?.total_duration_minutes != null
+                ? `${Number(quiz.total_duration_minutes).toFixed(2)} min total (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.questions?.length || 1))).toFixed(2)} min/q)`
+                : `${Math.round((quiz?.timePerQ || quiz?.time_per_q_sec || 300) / 60)} min/q`
+            }
           </div>
         </div>
 

@@ -12,6 +12,15 @@ def _new_id() -> str:
 
 
 async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Quiz:
+    total_q = len(data.questions) or 1
+    if data.total_duration_minutes is not None:
+        tot_min = round(float(data.total_duration_minutes), 2)
+        per_q_min = round(tot_min / total_q, 2)
+        time_per_q_sec = int(round(per_q_min * 60))
+    else:
+        time_per_q_sec = data.time_per_q_sec or 300
+        tot_min = round((time_per_q_sec * total_q) / 60.0, 2)
+
     quiz = Quiz(
         title=data.title,
         description=data.description,
@@ -21,7 +30,8 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
         availability_start=data.availability_start,
         availability_end=data.availability_end,
         creator_id=creator_id,
-        time_per_q_sec=data.time_per_q_sec,
+        time_per_q_sec=time_per_q_sec,
+        total_duration_minutes=tot_min,
         is_public=data.is_public,
         tags=data.tags,
         subject=data.subject,
@@ -103,7 +113,19 @@ async def update_quiz(db: AsyncSession, quiz_id: str, data: QuizUpdate) -> Optio
     quiz = await get_quiz(db, quiz_id)
     if not quiz:
         return None
-    for field, value in data.model_dump(exclude_none=True).items():
+    dump = data.model_dump(exclude_none=True)
+    if "total_duration_minutes" in dump:
+        tot_min = round(float(dump["total_duration_minutes"]), 2)
+        total_q = len(quiz.questions) or 1
+        per_q_min = round(tot_min / total_q, 2)
+        dump["total_duration_minutes"] = tot_min
+        dump["time_per_q_sec"] = int(round(per_q_min * 60))
+    elif "time_per_q_sec" in dump:
+        time_per_q_sec = dump["time_per_q_sec"]
+        total_q = len(quiz.questions) or 1
+        dump["total_duration_minutes"] = round((time_per_q_sec * total_q) / 60.0, 2)
+
+    for field, value in dump.items():
         setattr(quiz, field, value)
     await db.flush()
     return quiz
@@ -174,6 +196,10 @@ async def add_questions_to_quiz(db: AsyncSession, quiz_id: str, new_questions: L
             db.add(option)
 
     quiz.total_marks = float(quiz.total_marks or 0.0) + total_marks_added
+    new_total_q = current_count + len(new_questions)
+    if quiz.total_duration_minutes is not None and new_total_q > 0:
+        per_q_min = round(quiz.total_duration_minutes / new_total_q, 2)
+        quiz.time_per_q_sec = int(round(per_q_min * 60))
     await db.flush()
     db.expire_all()
     return await get_quiz(db, quiz_id)
