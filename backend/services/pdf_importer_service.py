@@ -150,10 +150,10 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
     """
     # 1. Extract printed answer key if available
     ans_patterns = [
-        r"Correct\s+Answer:\s*([A-Za-z0-9,\s\-]+)",
-        r"Answer:\s*([A-Za-z0-9,\s\-]+)",
-        r"Ans:\s*([A-Za-z0-9,\s\-]+)",
-        r"Key:\s*([A-Za-z0-9,\s\-]+)",
+        r"Correct\s+Answer:\s*([A-Za-z0-9,\s\.\-]+)",
+        r"Answer:\s*([A-Za-z0-9,\s\.\-]+)",
+        r"Ans:\s*([A-Za-z0-9,\s\.\-]+)",
+        r"Key:\s*([A-Za-z0-9,\s\.\-]+)",
     ]
     correct_raw = None
     cleaned_body = raw_body
@@ -212,14 +212,18 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
                     "image": None
                 })
 
-    # 4. Map correct answer letter to 0-based index
+    # 4. Map correct answer letter to 0-based index or format multi/numerical answers
     correct_idx = None
     if correct_raw:
-        single_letter_m = re.match(r"^([a-fA-F1-4])(?:\.|\))?$", correct_raw.strip())
-        if single_letter_m:
-            l = single_letter_m.group(1).upper()
-            if l in ["1", "2", "3", "4"]:
-                l = chr(ord("A") + int(l) - 1)
+        # Check for multi-letter pattern like A, B, C or A,B
+        multi_letters = [l.upper() for l in re.findall(r"\b([a-fA-F1-6])\b", correct_raw)]
+        multi_letters = [chr(ord("A") + int(l) - 1) if l in "123456" else l for l in multi_letters]
+        multi_letters = sorted(list(dict.fromkeys(multi_letters)))
+
+        if len(multi_letters) > 1:
+            correct_raw = ", ".join(multi_letters)
+        elif len(multi_letters) == 1:
+            l = multi_letters[0]
             for oi, opt in enumerate(options):
                 if opt.get("label") == l:
                     correct_idx = oi
@@ -228,28 +232,59 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
                 char_code = ord(l) - ord("A")
                 if 0 <= char_code < len(options):
                     correct_idx = char_code
+            correct_raw = l
+        else:
+            # Check for pure numerical answer
+            num_m = re.search(r"[-+]?\d+(?:\.\d+)?", correct_raw)
+            if num_m:
+                correct_raw = num_m.group(0)
 
     return _clean_text(statement), options, correct_idx, correct_raw, explanation
 
 
 def detect_question_type(text: str, options: List[Dict], raw_answer: Optional[str]) -> str:
-    """Classifies question type strictly following user requirements."""
+    """
+    Classifies question type strictly following question markers and user requirements.
+    The question's own type marker takes highest priority over any section headings.
+    """
     upper = text.upper()
     
-    # 1. Match the Column
-    if "MATCH THE COLUMN" in upper or ("COLUMN-I" in upper and "COLUMN-II" in upper) or ("COLUMN I" in upper and "COLUMN II" in upper):
+    # 1. Question's own type marker takes priority!
+    # Numerical:
+    if any(marker in upper for marker in [
+        "[NUMERICAL", "(NUMERICAL", "NUMERICAL VALUE TYPE", "NUMERICAL VALUE",
+        "NUMERICAL ANSWER", "[INTEGER", "(INTEGER", "INTEGER VALUE TYPE", "INTEGER TYPE"
+    ]):
+        return "numerical"
+
+    # Multi-Correct:
+    if any(marker in upper for marker in [
+        "[MULTI", "(MULTI", "MORE THAN ONE OPTION", "ONE OR MORE THAN ONE",
+        "ONE OR MORE OPTIONS", "MULTIPLE CORRECT", "MULTI-CORRECT", "MULTI CORRECT"
+    ]):
+        return "multi_correct"
+
+    if raw_answer and (
+        "," in raw_answer
+        or "AND" in raw_answer.upper()
+        or len(re.findall(r"\b[A-F]\b", raw_answer.upper())) > 1
+    ):
+        return "multi_correct"
+
+    # Match the Column:
+    if any(marker in upper for marker in [
+        "[MATCH", "(MATCH", "MATCH THE COLUMN",
+    ]) or (("COLUMN-I" in upper or "COLUMN I" in upper) and ("COLUMN-II" in upper or "COLUMN II" in upper)):
         return "match_column"
 
-    # 2. Assertion - Reason
+    # Assertion - Reason:
     if ("ASSERTION" in upper and "REASON" in upper) or ("ASSERTION (A)" in upper and "REASON (R)" in upper):
         return "assertion_reason"
 
-    # 3. Multi-Correct
-    if raw_answer and ("," in raw_answer or "AND" in raw_answer.upper() or len(raw_answer.strip().split()) > 1):
-        return "multi_correct"
-
-    # 4. Numerical Answer
+    # Numerical without explicit marker if no options:
     if not options or len(options) == 0:
+        if raw_answer and re.match(r"^[-+]?\d+(?:\.\d+)?$", raw_answer.strip()):
+            return "numerical"
         if any(term in upper for term in ["INTEGER", "NUMERICAL", "CALCULATE", "VALUE OF"]):
             return "numerical"
 
@@ -419,6 +454,12 @@ async def analyze_pdf(
         # Remove leading Q1., Q2. etc. from statement body
         full_raw_body = re.sub(r"^(?:Q|Question)\s*\d+\s*[\.:]\s*", "", full_raw_body.strip(), flags=re.IGNORECASE)
 
+        # Strip any trailing section heading that introduces upcoming questions (e.g. "SECTION C — MATCH THE COLUMN (Q5–Q6)")
+        # so it does not bleed into the current question statement or overwrite its question type
+        trailing_sec_split = re.split(r"\n\s*(?:SECTION|PART)\s+[A-Z]\b[^\n]*", full_raw_body, flags=re.IGNORECASE)
+        if len(trailing_sec_split) > 1 and len(trailing_sec_split[0].strip()) > 15:
+            full_raw_body = trailing_sec_split[0].strip()
+
         # Parse statement, options, correct answer, explanation
         statement, options_dict_list, correct_idx, raw_ans, explanation = extract_options_and_answer(full_raw_body)
 
@@ -437,6 +478,26 @@ async def analyze_pdf(
 
         # Classify question type
         q_type = detect_question_type(statement + " " + (full_raw_body), options_dict_list, raw_ans)
+
+        # Resolve correct_options_list
+        correct_options_list = None
+        if q_type == "multi_correct":
+            if raw_ans:
+                raw_letters = [l.upper() for l in re.findall(r"\b([A-Fa-f1-6])\b", raw_ans)]
+                correct_options_list = sorted(list(dict.fromkeys(
+                    [chr(ord('A') + int(l) - 1) if l in "123456" else l for l in raw_letters]
+                )))
+            else:
+                correct_options_list = []
+        elif q_type in ["single_correct", "match_column", "assertion_reason"]:
+            if correct_idx is not None:
+                correct_options_list = [chr(ord('A') + correct_idx)]
+        elif q_type == "numerical":
+            correct_options_list = []
+            if raw_ans:
+                num_m = re.search(r"[-+]?\d+(?:\.\d+)?", raw_ans)
+                if num_m:
+                    raw_ans = num_m.group(0)
 
         # Primary question image & diagram
         images = q_extracted_images.get(q_num, [])
@@ -551,7 +612,23 @@ async def analyze_pdf(
             review_notes.append("Question statement text is missing")
             confidence -= 0.4
 
-        if q_type in ["single_correct", "match_column", "assertion_reason"]:
+        if q_type == "numerical":
+            if not raw_ans or not re.search(r"[-+]?\d+(?:\.\d+)?", raw_ans):
+                needs_review = True
+                review_notes.append("Printed numerical answer could not be verified")
+                confidence -= 0.35
+
+        elif q_type == "multi_correct":
+            if len(options_models) < 2:
+                needs_review = True
+                review_notes.append(f"Expected >= 2 options, found {len(options_models)}")
+                confidence -= 0.3
+            if not correct_options_list:
+                needs_review = True
+                review_notes.append("Multi-correct answer keys could not be determined")
+                confidence -= 0.35
+
+        elif q_type in ["single_correct", "match_column", "assertion_reason"]:
             if len(options_models) < 2:
                 needs_review = True
                 review_notes.append(f"Expected >= 2 options, found {len(options_models)}")
@@ -573,6 +650,8 @@ async def analyze_pdf(
         else:
             ready_count += 1
 
+        review_status = "needs_review" if needs_review else "verified"
+
         item = BulkImportQuestionItem(
             question_number=q_num,
             question_type=q_type,
@@ -585,13 +664,15 @@ async def analyze_pdf(
             options=options_models,
             correct_answer=correct_idx,
             raw_answer=raw_ans,
+            correct_options=correct_options_list,
             positive_marks=default_pos_marks,
-            negative_marks=default_neg_marks if q_type != "numerical" else 0.0,
+            negative_marks=default_neg_marks,
             source_page=p_start + 1,
             source_pages=source_pages,
             source_image=q_source_crops.get(q_num),
             confidence=confidence,
             needs_review=needs_review,
+            review_status=review_status,
             review_notes=review_notes,
         )
         questions_out.append(item)

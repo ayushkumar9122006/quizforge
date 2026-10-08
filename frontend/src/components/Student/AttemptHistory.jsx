@@ -20,7 +20,7 @@ function formatIST(dateStr) {
   }
 }
 
-export default function AttemptHistory({ attempts = [], onDelete, onView, onBack }) {
+export default function AttemptHistory({ attempts = [], onView, onBack }) {
   // Sort attempts by most recent submission date descending
   const sortedAttempts = [...attempts].sort((a, b) => {
     const timeA = new Date(a.date || a.submitted_at || 0).getTime()
@@ -159,16 +159,6 @@ export default function AttemptHistory({ attempts = [], onDelete, onView, onBack
                 >
                   View Result →
                 </button>
-                {onDelete && (
-                  <button
-                    className="btn-danger"
-                    style={{ fontSize: 12, padding: '7px 10px', opacity: 0.8 }}
-                    onClick={() => onDelete(a.id)}
-                    title="Remove from local view"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             </div>
           )

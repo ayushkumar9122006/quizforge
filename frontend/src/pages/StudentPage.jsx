@@ -209,13 +209,30 @@ export default function StudentPage({
     if (!activeQuiz || !session) return
     const questions = activeQuiz.questions || []
 
-    const payload = questions.map((q, i) => ({
-      question_id: q.id,
-      selected_option: answers[i] ?? null,
-      response_text: null,
-      marked_for_review: marked.has(i),
-      time_taken_sec: questionTimes[i] || 0,
-    }))
+    const payload = questions.map((q, i) => {
+      const userAns = answers[i]
+      let selectedOption = null
+      let responseText = null
+
+      if (q.question_type === 'numerical') {
+        selectedOption = null
+        responseText = userAns !== undefined && userAns !== null ? String(userAns).trim() : null
+      } else if (q.question_type === 'multi_correct') {
+        selectedOption = null
+        responseText = Array.isArray(userAns) ? JSON.stringify(userAns) : (userAns !== undefined && userAns !== null ? String(userAns) : null)
+      } else {
+        selectedOption = typeof userAns === 'number' ? userAns : null
+        responseText = null
+      }
+
+      return {
+        question_id: q.id,
+        selected_option: selectedOption,
+        response_text: responseText,
+        marked_for_review: marked.has(i),
+        time_taken_sec: questionTimes[i] || 0,
+      }
+    })
 
     let attemptResult
     try {
@@ -235,14 +252,17 @@ export default function StudentPage({
     const resolved = questions.map((q, i) => {
       const resItem = correctMap[q.id]
       const correctAns = resItem?.correct_answer ?? q.correct
+      const rawAns = resItem?.raw_answer ?? q.raw_answer
       const userAns = answers[i]
-      const isCorrect = resItem ? resItem.is_correct : (userAns !== undefined && userAns === correctAns)
+      const isCorrect = resItem ? resItem.is_correct : false
       return {
         ...q,
         correct: correctAns,
         correct_answer: correctAns,
-        selectedOption: userAns,
+        raw_answer: rawAns,
+        selectedOption: typeof userAns === 'number' ? userAns : null,
         userAnswer: userAns,
+        response_text: q.question_type === 'numerical' ? (userAns ?? null) : (Array.isArray(userAns) ? JSON.stringify(userAns) : null),
         isCorrect,
         marked_for_review: marked.has(i) || resItem?.marked_for_review,
         marks_awarded: resItem?.marks_awarded,
@@ -341,8 +361,6 @@ export default function StudentPage({
     setScreen('results')
   }
 
-  const deleteAttempt = id => setAttempts(prev => prev.filter(a => a.id !== id))
-
   // ── Pre-Test Instructions Modal (Feature 6) ──────────────────────────────────
   const instructionModal = instructionTarget && (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(10, 10, 25, 0.65)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 500, padding: '1.2rem' }}>
@@ -401,10 +419,20 @@ export default function StudentPage({
             <li><strong>Scoring:</strong> Correct answers receive positive marks. Incorrect answers receive negative marks penalty. Unanswered/skipped questions carry zero penalty.</li>
             <li><strong>Auto-Submit:</strong> The test will auto-submit when the overall timer expires. Ensure you finalize your answers in time.</li>
           </ul>
-          {instructionTarget.instructions && (
+          {instructionTarget.instructions ? (
             <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #cbd5e1', whiteSpace: 'pre-line' }}>
-              <strong>Instructor's Notes:</strong><br />
+              <strong>Test Instructions & Question Guidelines:</strong><br />
               {instructionTarget.instructions}
+            </div>
+          ) : (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px dashed #cbd5e1', whiteSpace: 'pre-line' }}>
+              <strong>Test Instructions & Question Guidelines:</strong><br />
+              • Single Correct MCQ: Select exactly ONE option.<br />
+              • Multi-Correct MCQ: Select all options you believe are correct.<br />
+              • Partial Marking: Partial marks may be awarded when only a subset of correct options is selected and no wrong option is selected.<br />
+              • Wrong Option Penalty: Selecting even one incorrect option in a Multi-Correct question results in the configured negative mark.<br />
+              • Numerical Answer: Enter an integer or decimal value with at most 2 decimal places. Values with more than 2 decimal places are not allowed. Fewer than 2 decimal places is allowed (units or text are not permitted).<br />
+              • Match the Column: Match items according to the instructions given in the question.
             </div>
           )}
         </div>
@@ -563,7 +591,6 @@ export default function StudentPage({
   if (screen === 'history') return (
     <AttemptHistory
       attempts={attempts}
-      onDelete={deleteAttempt}
       onView={a => { setViewingAttempt(a); setScreen('historyDetail') }}
       onBack={() => setScreen('home')}
     />

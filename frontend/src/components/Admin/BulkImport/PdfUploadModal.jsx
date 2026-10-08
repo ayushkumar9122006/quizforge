@@ -10,7 +10,23 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
   const [sections, setSections] = useState(['Section A', 'Section B', 'Section C', 'Section D'])
   const [newSecInput, setNewSecInput] = useState('')
   const [instructions, setInstructions] = useState(
-    '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'
+    'Please read each question carefully before answering.\n\n' +
+    '• Single Correct MCQ:\n' +
+    '  Select exactly ONE option.\n\n' +
+    '• Multi-Correct MCQ:\n' +
+    '  Select ALL options that you believe are correct.\n' +
+    '  Selecting even ONE incorrect option will result in -1 mark for the question.\n' +
+    '  If you select only correct options, partial marks may be awarded according to the proportion of correct options selected.\n' +
+    '  Leaving the question unanswered gives 0 marks.\n\n' +
+    '• Numerical Answer:\n' +
+    '  Enter only the numerical value.\n' +
+    '  You may enter an integer or a decimal value with up to 2 decimal places.\n' +
+    '  Values with more than 2 decimal places are not allowed.\n' +
+    '  You may enter fewer than 2 decimal places.\n' +
+    '  Do not enter units or other text.\n\n' +
+    '• Match the Column:\n' +
+    '  Match the items according to the instructions given in the question.\n\n' +
+    '• Check your answers carefully before submitting the test.'
   )
   const [enableWindow, setEnableWindow] = useState(false)
   const [availStart, setAvailStart] = useState('')

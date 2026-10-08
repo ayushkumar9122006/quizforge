@@ -94,8 +94,13 @@ export function toApiFormat(frontendQuiz, totalDurationMin = null, fallbackTimeP
     subject:           frontendQuiz.subject || null,
     difficulty:        frontendQuiz.difficulty || null,
     questions: (frontendQuiz.questions || []).map((q, i) => {
-      const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : (q.marks !== undefined ? Number(q.marks) : 1)
-      const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      const isNum = (q.question_type === 'numerical')
+      const pos = q.positive_marks !== undefined && q.positive_marks !== null
+        ? Number(q.positive_marks)
+        : (q.marks !== undefined && q.marks !== null ? Number(q.marks) : (isNum ? 4 : 1))
+      const neg = q.negative_marks !== undefined && q.negative_marks !== null
+        ? Number(q.negative_marks)
+        : (isNum ? 1 : 0)
       const qImg = q.question_image || q.qImage || null
       const corr = q.correct_answer !== undefined ? q.correct_answer : (q.correct ?? null)
       return {
@@ -105,7 +110,7 @@ export function toApiFormat(frontendQuiz, totalDurationMin = null, fallbackTimeP
         question_image: qImg,
         content_type:   qImg ? (q.text ? 'both' : 'image') : 'text',
         correct_answer: corr,
-        raw_answer:     q.raw_answer || null,
+        raw_answer:     q.raw_answer || (Array.isArray(q.correct_options) ? q.correct_options.join(', ') : null),
         question_type:  q.question_type || 'single_correct',
         match_data:     q.match_data || null,
         explanation:    q.explanation || (q.source_page ? `PDF Page ${q.source_page}` : null),
@@ -235,8 +240,9 @@ export async function analyzePdfForImport(file, { defaultPosMarks = 4, defaultNe
 export async function confirmBulkImport(quizId, questions) {
   const payload = {
     questions: questions.map((q, i) => {
-      const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : 4
-      const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      const isNum = (q.question_type === 'numerical')
+      const pos = q.positive_marks !== undefined && q.positive_marks !== null ? Number(q.positive_marks) : 4
+      const neg = q.negative_marks !== undefined && q.negative_marks !== null ? Number(q.negative_marks) : (isNum ? 1 : 0)
       return {
         order_index: i,
         section: q.section || 'General',

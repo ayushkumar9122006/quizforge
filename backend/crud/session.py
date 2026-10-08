@@ -12,6 +12,9 @@ from typing import Optional, List
 import asyncio
 import random
 import string
+import json
+import math
+import re
 
 
 def generate_room_code() -> str:
@@ -165,29 +168,144 @@ async def submit_attempt(
             continue
         pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
         neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+        q_type = getattr(q, "question_type", "single_correct") or "single_correct"
 
         is_marked = bool(getattr(ans_data, "marked_for_review", False))
         if is_marked:
             marked_count += 1
 
-        is_answered = (ans_data.selected_option is not None) or (
-            getattr(ans_data, "response_text", None) is not None and str(ans_data.response_text).strip() != ""
-        )
+        resp_text = getattr(ans_data, "response_text", None)
+        sel_opt = getattr(ans_data, "selected_option", None)
 
-        if not is_answered:
-            is_correct = False
-            marks_awarded = 0.0
-            skipped_count += 1
-        elif ans_data.selected_option == q.correct_answer:
-            is_correct = True
-            marks_awarded = pos
-            correct_count += 1
-            attempted_count += 1
+        if q_type == "numerical":
+            is_answered = (resp_text is not None and str(resp_text).strip() != "")
+            if not is_answered:
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                val_str = str(resp_text).strip()
+                # Enforce input restriction: at most 2 digits after decimal
+                dec_match = re.search(r"\.(\d+)", val_str)
+                has_excess_decimals = bool(dec_match and len(dec_match.group(1)) > 2)
+                student_val = None
+                if not has_excess_decimals:
+                    try:
+                        student_val = float(val_str)
+                    except ValueError:
+                        student_val = None
+
+                if student_val is None:
+                    # Invalid numeric format or > 2 decimal places
+                    is_correct = False
+                    marks_awarded = -neg
+                    incorrect_count += 1
+                else:
+                    correct_val = None
+                    if q.raw_answer:
+                        m = re.search(r"[-+]?\d+(?:\.\d+)?", str(q.raw_answer))
+                        if m:
+                            try:
+                                correct_val = float(m.group(0))
+                            except ValueError:
+                                pass
+                    if correct_val is not None and abs(student_val - correct_val) <= 0.01 + 1e-7:
+                        is_correct = True
+                        marks_awarded = pos
+                        correct_count += 1
+                    else:
+                        is_correct = False
+                        marks_awarded = -neg
+                        incorrect_count += 1
+
+        elif q_type == "multi_correct":
+            selected_set = set()
+            if resp_text is not None and str(resp_text).strip() != "":
+                try:
+                    parsed = json.loads(resp_text)
+                    if isinstance(parsed, list):
+                        for x in parsed:
+                            if isinstance(x, int):
+                                selected_set.add(x)
+                            elif isinstance(x, str) and x.strip().isdigit():
+                                selected_set.add(int(x.strip()))
+                            elif isinstance(x, str) and len(x.strip()) == 1 and x.strip().upper() in "ABCDEF":
+                                selected_set.add(ord(x.strip().upper()) - ord('A'))
+                except Exception:
+                    tokens = re.findall(r"\b([A-Fa-f0-9])\b", str(resp_text))
+                    for t in tokens:
+                        if t.isdigit():
+                            selected_set.add(int(t))
+                        else:
+                            selected_set.add(ord(t.upper()) - ord('A'))
+            if sel_opt is not None:
+                selected_set.add(sel_opt)
+
+            if len(selected_set) == 0:
+                # RULE 3 — NO ANSWER: score = 0
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                correct_set = set()
+                if q.raw_answer:
+                    letters = re.findall(r"\b([A-Fa-f0-9])\b", str(q.raw_answer))
+                    for l in letters:
+                        if l.isdigit():
+                            correct_set.add(int(l))
+                        else:
+                            correct_set.add(ord(l.upper()) - ord('A'))
+                if not correct_set and q.correct_answer is not None:
+                    correct_set.add(q.correct_answer)
+
+                incorrect_selected = selected_set - correct_set
+                correct_selected = selected_set & correct_set
+
+                # RULE 1 — ANY WRONG OPTION SELECTED
+                if len(incorrect_selected) > 0:
+                    penalty = neg if neg > 0 else 1.0
+                    is_correct = False
+                    marks_awarded = -penalty
+                    incorrect_count += 1
+                else:
+                    # RULE 2 — ONLY CORRECT OPTIONS SELECTED
+                    tot_corr = len(correct_set) if len(correct_set) > 0 else 1
+                    int_score = math.floor(pos * len(correct_selected) / tot_corr)
+                    marks_awarded = float(int_score)
+                    is_correct = (selected_set == correct_set)
+                    if is_correct:
+                        correct_count += 1
+
         else:
-            is_correct = False
-            marks_awarded = -neg
-            incorrect_count += 1
-            attempted_count += 1
+            # Single Correct, Match the Column, Assertion-Reason
+            is_answered = (sel_opt is not None) or (resp_text is not None and str(resp_text).strip() != "")
+            if not is_answered:
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                user_idx = sel_opt
+                if user_idx is None and resp_text is not None:
+                    if str(resp_text).strip().isdigit():
+                        user_idx = int(str(resp_text).strip())
+                    elif len(str(resp_text).strip()) == 1 and str(resp_text).strip().upper() in "ABCDEF":
+                        user_idx = ord(str(resp_text).strip().upper()) - ord('A')
+
+                corr_idx = q.correct_answer
+                if corr_idx is None and q.raw_answer and len(str(q.raw_answer).strip()) == 1 and str(q.raw_answer).strip().upper() in "ABCDEF":
+                    corr_idx = ord(str(q.raw_answer).strip().upper()) - ord('A')
+
+                if user_idx is not None and corr_idx is not None and user_idx == corr_idx:
+                    is_correct = True
+                    marks_awarded = pos
+                    correct_count += 1
+                else:
+                    is_correct = False
+                    marks_awarded = -neg
+                    incorrect_count += 1
 
         score += marks_awarded
 
@@ -209,6 +327,7 @@ async def submit_attempt(
             "response_text":     getattr(ans_data, "response_text", None),
             "marked_for_review": is_marked,
             "correct_answer":    q.correct_answer,
+            "raw_answer":        q.raw_answer,
             "is_correct":        is_correct,
             "marks_awarded":     marks_awarded,
         })
@@ -401,7 +520,8 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             q = q_map.get(ans.question_id)
             if q:
                 idx = q.order_index
-                answers_dict[idx] = ans.selected_option
+                user_val = ans.response_text if (ans.response_text is not None and ans.response_text != "") else ans.selected_option
+                answers_dict[idx] = user_val
                 question_times_dict[idx] = ans.time_taken_sec
 
         sections = sorted(list(set(q.section or "General" for q in questions)))
@@ -429,6 +549,7 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             user_ans_obj = next((a for a in (att.answers or []) if a.question_id == q.id), None)
             pos_m = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
             neg_m = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+            user_ans_val = (user_ans_obj.response_text if (user_ans_obj and user_ans_obj.response_text is not None and user_ans_obj.response_text != "") else (user_ans_obj.selected_option if user_ans_obj else None))
             resolved_questions.append({
                 "id": q.id,
                 "text": q.text,
@@ -436,13 +557,15 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
                 "section": q.section,
                 "correct": q.correct_answer,
                 "correct_answer": q.correct_answer,
+                "raw_answer": q.raw_answer,
+                "question_type": q.question_type or "single_correct",
                 "explanation": q.explanation,
                 "marks": pos_m,
                 "positive_marks": pos_m,
                 "negative_marks": neg_m,
                 "diagram": q.diagram,
                 "isCorrect": user_ans_obj.is_correct if user_ans_obj else False,
-                "userAnswer": user_ans_obj.selected_option if user_ans_obj else None,
+                "userAnswer": user_ans_val,
                 "marked_for_review": user_ans_obj.marked_for_review if user_ans_obj else False,
                 "response_text": user_ans_obj.response_text if user_ans_obj else None,
                 "marksAwarded": user_ans_obj.marks_awarded if user_ans_obj else 0.0,

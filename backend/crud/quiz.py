@@ -1,5 +1,5 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
 from models.all_models import Quiz, Question, Option, QuizStatus
 from schemas.quiz import QuizCreate, QuizUpdate
@@ -42,8 +42,9 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
 
     total_marks = 0.0
     for i, q_data in enumerate(data.questions):
-        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (q_data.marks or 1.0))
-        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else 0.0)
+        q_type = getattr(q_data, "question_type", "single_correct") or "single_correct"
+        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (4.0 if q_type == "numerical" else (q_data.marks or 1.0)))
+        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else (1.0 if q_type == "numerical" else 0.0))
         question = Question(
             quiz_id=quiz.id,
             order_index=i,
@@ -132,9 +133,49 @@ async def update_quiz(db: AsyncSession, quiz_id: str, data: QuizUpdate) -> Optio
 
 
 async def delete_quiz(db: AsyncSession, quiz_id: str) -> bool:
+    """
+    Permanently deletes a quiz and all associated data in a single atomic transaction:
+    - Quiz sessions
+    - Student test attempts (all statuses: submitted, auto_submitted, in_progress)
+    - Student answers and responses
+    - Leaderboard records
+    - Questions, options, and explanations
+    """
+    from models.all_models import QuizSession, Attempt, Answer, LeaderboardEntry
+
     quiz = await get_quiz(db, quiz_id)
     if not quiz:
         return False
+
+    # 1. Collect all session IDs belonging strictly to this quiz
+    session_ids = (await db.execute(
+        select(QuizSession.id).where(QuizSession.quiz_id == quiz_id)
+    )).scalars().all()
+
+    if session_ids:
+        # 2. Collect all attempt IDs for these sessions
+        attempt_ids = (await db.execute(
+            select(Attempt.id).where(Attempt.session_id.in_(session_ids))
+        )).scalars().all()
+
+        if attempt_ids:
+            # Delete all student answers for these attempts
+            await db.execute(delete(Answer).where(Answer.attempt_id.in_(attempt_ids)))
+            # Delete all student attempts for these sessions
+            await db.execute(delete(Attempt).where(Attempt.id.in_(attempt_ids)))
+
+        # Delete all leaderboard records for these sessions
+        await db.execute(delete(LeaderboardEntry).where(LeaderboardEntry.session_id.in_(session_ids)))
+
+        # Delete all sessions for this quiz
+        await db.execute(delete(QuizSession).where(QuizSession.id.in_(session_ids)))
+
+    # 3. Clean up any remaining answers linked to questions of this quiz
+    question_ids = [q.id for q in (quiz.questions or [])]
+    if question_ids:
+        await db.execute(delete(Answer).where(Answer.question_id.in_(question_ids)))
+
+    # 4. Delete the quiz entity (questions, options, explanations deleted via cascade)
     await db.delete(quiz)
     await db.flush()
     return True
@@ -158,8 +199,9 @@ async def add_questions_to_quiz(db: AsyncSession, quiz_id: str, new_questions: L
     total_marks_added = 0.0
 
     for i, q_data in enumerate(new_questions):
-        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (q_data.marks or 1.0))
-        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else 0.0)
+        q_type = getattr(q_data, "question_type", "single_correct") or "single_correct"
+        pos_marks = float(q_data.positive_marks if q_data.positive_marks is not None else (4.0 if q_type == "numerical" else (q_data.marks or 1.0)))
+        neg_marks = float(q_data.negative_marks if q_data.negative_marks is not None else (1.0 if q_type == "numerical" else 0.0))
         exp = q_data.explanation
         if not exp and getattr(q_data, "source_page", None):
             exp = f"PDF Page {q_data.source_page}"

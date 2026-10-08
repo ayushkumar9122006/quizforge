@@ -8,11 +8,23 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
   const [posMarks, setPosMarks] = useState(4)
   const [negMarks, setNegMarks] = useState(1)
   const [instructions, setInstructions] = useState(
-    '• Read each question carefully before choosing an answer.\n' +
-    '• Each question has positive marks for correct answers and negative marking for incorrect answers.\n' +
-    '• No marks are deducted for skipped/unattempted questions.\n' +
-    '• Clear Response: You can clear a selected response anytime without affecting Mark for Review.\n' +
-    '• The test will auto-submit when the overall test time expires.'
+    'Please read each question carefully before answering.\n\n' +
+    '• Single Correct MCQ:\n' +
+    '  Select exactly ONE option.\n\n' +
+    '• Multi-Correct MCQ:\n' +
+    '  Select ALL options that you believe are correct.\n' +
+    '  Selecting even ONE incorrect option will result in -1 mark for the question.\n' +
+    '  If you select only correct options, partial marks may be awarded according to the proportion of correct options selected.\n' +
+    '  Leaving the question unanswered gives 0 marks.\n\n' +
+    '• Numerical Answer:\n' +
+    '  Enter only the numerical value.\n' +
+    '  You may enter an integer or a decimal value with up to 2 decimal places.\n' +
+    '  Values with more than 2 decimal places are not allowed.\n' +
+    '  You may enter fewer than 2 decimal places.\n' +
+    '  Do not enter units or other text.\n\n' +
+    '• Match the Column:\n' +
+    '  Match the items according to the instructions given in the question.\n\n' +
+    '• Check your answers carefully before submitting the test.'
   )
   const [solutionPdf, setSolutionPdf] = useState(null)
   const [solutionPdfName, setSolutionPdfName] = useState('')

@@ -34,8 +34,8 @@ class QuestionCreate(BaseModel):
     question_type: str = "single_correct"
     explanation: Optional[str] = None
     marks: float = 1.0
-    positive_marks: float = Field(default=1.0, ge=0.0)
-    negative_marks: float = Field(default=0.0, ge=0.0)
+    positive_marks: Optional[float] = None
+    negative_marks: Optional[float] = None
     diagram: Optional[str] = None
     options: List[OptionCreate] = []
 
@@ -287,6 +287,7 @@ class BulkImportQuestionItem(BaseModel):
     options: List[BulkImportOptionItem] = []
     correct_answer: Optional[int] = None # 0-based option index
     raw_answer: Optional[str] = None # e.g. "C" or "A, C" or "45"
+    correct_options: Optional[List[str]] = None # e.g. ["A", "B", "C"]
     positive_marks: float = 4.0
     negative_marks: float = 1.0
     source_page: int = 1

@@ -56,7 +56,23 @@ export default function QuestionReviewScreen({
 
   const [instructions, setInstructions] = useState(
     analysisData?.customInstructions ||
-    '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'
+    'Please read each question carefully before answering.\n\n' +
+    '• Single Correct MCQ:\n' +
+    '  Select exactly ONE option.\n\n' +
+    '• Multi-Correct MCQ:\n' +
+    '  Select ALL options that you believe are correct.\n' +
+    '  Selecting even ONE incorrect option will result in -1 mark for the question.\n' +
+    '  If you select only correct options, partial marks may be awarded according to the proportion of correct options selected.\n' +
+    '  Leaving the question unanswered gives 0 marks.\n\n' +
+    '• Numerical Answer:\n' +
+    '  Enter only the numerical value.\n' +
+    '  You may enter an integer or a decimal value with up to 2 decimal places.\n' +
+    '  Values with more than 2 decimal places are not allowed.\n' +
+    '  You may enter fewer than 2 decimal places.\n' +
+    '  Do not enter units or other text.\n\n' +
+    '• Match the Column:\n' +
+    '  Match the items according to the instructions given in the question.\n\n' +
+    '• Check your answers carefully before submitting the test.'
   )
   const [enableWindow, setEnableWindow] = useState(
     Boolean(analysisData?.enableWindow || analysisData?.availabilityStart || analysisData?.availabilityEnd)
@@ -141,7 +157,19 @@ export default function QuestionReviewScreen({
   // ── Helpers to update individual questions ──────────────────────────────────
   const updateQuestion = (qNum, field, val) => {
     setQuestions((prev) =>
-      prev.map((q) => (q.question_number === qNum ? { ...q, [field]: val } : q))
+      prev.map((q) => {
+        if (q.question_number !== qNum) return q
+        const updated = { ...q, [field]: val }
+        if (field === 'question_type' && val === 'numerical') {
+          if (updated.positive_marks === undefined || updated.positive_marks === null) {
+            updated.positive_marks = 4
+          }
+          if (updated.negative_marks === undefined || updated.negative_marks === null || updated.negative_marks === 0) {
+            updated.negative_marks = 1
+          }
+        }
+        return updated
+      })
     )
   }
 
@@ -752,9 +780,26 @@ export default function QuestionReviewScreen({
                     {curSec} · Q{qInSec}/{totInSec}
                   </span>
 
-                  <span style={{ fontSize: 12, fontWeight: 700, padding: '3px 9px', borderRadius: 6, background: '#f1f5f9', color: '#475569' }}>
-                    {typeLabel}
-                  </span>
+                  <select
+                    value={q.question_type || 'single_correct'}
+                    onChange={(e) => updateQuestion(q.question_number, 'question_type', e.target.value)}
+                    style={{
+                      fontSize: 12,
+                      fontWeight: 700,
+                      padding: '3px 8px',
+                      borderRadius: 6,
+                      border: '1.5px solid #cbd5e1',
+                      background: '#fff',
+                      color: '#334155',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <option value="single_correct">🔘 Single Correct MCQ</option>
+                    <option value="multi_correct">☑️ Multi-Correct MCQ</option>
+                    <option value="numerical">🔢 Numerical Answer</option>
+                    <option value="match_column">🔗 Match the Column</option>
+                    <option value="assertion_reason">⚖️ Assertion–Reason</option>
+                  </select>
 
                   <span style={{ fontSize: 11, color: '#6b7280', fontWeight: 600 }}>
                     Page {q.source_pages?.join(', ') || q.source_page}
@@ -928,15 +973,60 @@ export default function QuestionReviewScreen({
                     return null
                   })()}
 
-                  {/* Options List */}
-                  {q.options && q.options.length > 0 && (
-                    <div>
-                      <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 6 }}>
-                        Options & Correct Answer
+                  {/* Answer & Options according to Question Type */}
+                  {q.question_type === 'numerical' ? (
+                    <div style={{ padding: '12px 14px', background: '#f0fdf4', borderRadius: 10, border: '1.5px solid #86efac' }}>
+                      <label style={{ fontSize: 12, fontWeight: 800, color: '#166534', display: 'block', marginBottom: 6 }}>
+                        🔢 Correct Numerical Answer
                       </label>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: 12, fontWeight: 700, color: '#15803d' }}>Answer:</span>
+                        <input
+                          type="text"
+                          value={q.raw_answer || ''}
+                          onChange={(e) => {
+                            const val = e.target.value
+                            updateQuestion(q.question_number, 'raw_answer', val)
+                            if (val && val.trim() !== '') {
+                              updateQuestion(q.question_number, 'needs_review', false)
+                            }
+                          }}
+                          placeholder="e.g. 66.67 or 60"
+                          style={{ padding: '6px 12px', fontSize: 14, fontWeight: 700, borderRadius: 6, border: '1.5px solid #22c55e', background: '#fff', width: 160, fontFamily: 'monospace' }}
+                        />
+                        <span style={{ fontSize: 11, color: '#15803d' }}>
+                          (Students can enter integer or decimal values with at most 2 decimal places)
+                        </span>
+                      </div>
+                    </div>
+                  ) : q.question_type === 'multi_correct' ? (
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#374151' }}>
+                          Options & Correct Answers (Select all correct options)
+                        </label>
+                        <span style={{ fontSize: 11, fontWeight: 800, color: '#4338ca', background: '#ede9fe', padding: '2px 8px', borderRadius: 4 }}>
+                          ☑ Multi-Correct Checkboxes
+                        </span>
+                      </div>
                       <div style={{ display: 'grid', gap: 7 }}>
-                        {q.options.map((opt, oi) => {
-                          const isCorrect = q.correct_answer === oi
+                        {(q.options && q.options.length > 0 ? q.options : [0, 1, 2, 3].map(oi => ({ order_index: oi, label: String.fromCharCode(65 + oi), text: '' }))).map((opt, oi) => {
+                          const label = (opt.label || String.fromCharCode(65 + oi)).toUpperCase()
+                          const multiList = (() => {
+                            if (Array.isArray(q.correct_options) && q.correct_options.length > 0) return q.correct_options
+                            if (q.raw_answer) {
+                              const l = (q.raw_answer.match(/[A-Fa-f1-6]/g) || []).map(x => {
+                                const u = x.toUpperCase()
+                                return '123456'.includes(u) ? String.fromCharCode(65 + parseInt(u, 10) - 1) : u
+                              })
+                              return Array.from(new Set(l))
+                            }
+                            if (q.correct_answer !== null && q.correct_answer !== undefined) {
+                              return [String.fromCharCode(65 + q.correct_answer)]
+                            }
+                            return []
+                          })()
+                          const isChecked = multiList.includes(label)
                           return (
                             <div
                               key={oi}
@@ -946,19 +1036,29 @@ export default function QuestionReviewScreen({
                                 gap: 8,
                                 padding: '6px 10px',
                                 borderRadius: 8,
-                                border: `1.5px solid ${isCorrect ? '#10b981' : '#e2e8f0'}`,
-                                background: isCorrect ? '#ecfdf5' : '#fff',
+                                border: `1.5px solid ${isChecked ? '#10b981' : '#e2e8f0'}`,
+                                background: isChecked ? '#ecfdf5' : '#fff',
                               }}
                             >
                               <input
-                                type="radio"
-                                name={`q_ans_${q.question_number}`}
-                                checked={isCorrect}
-                                onChange={() => updateQuestion(q.question_number, 'correct_answer', oi)}
-                                style={{ accentColor: '#10b981', cursor: 'pointer' }}
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  const nextList = e.target.checked
+                                    ? [...multiList, label].sort()
+                                    : multiList.filter(x => x !== label)
+                                  const newRaw = nextList.join(', ')
+                                  setQuestions(prev => prev.map(item => item.question_number === q.question_number ? {
+                                    ...item,
+                                    correct_options: nextList,
+                                    raw_answer: newRaw,
+                                    needs_review: nextList.length === 0,
+                                  } : item))
+                                }}
+                                style={{ width: 16, height: 16, accentColor: '#10b981', cursor: 'pointer' }}
                               />
-                              <span style={{ fontWeight: 800, fontSize: 12, width: 22, color: isCorrect ? '#065f46' : '#64748b' }}>
-                                ({opt.label || String.fromCharCode(65 + oi)})
+                              <span style={{ fontWeight: 800, fontSize: 12, width: 22, color: isChecked ? '#065f46' : '#64748b' }}>
+                                ({label})
                               </span>
                               <input
                                 type="text"
@@ -966,7 +1066,7 @@ export default function QuestionReviewScreen({
                                 onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
                                 style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
                               />
-                              {isCorrect && (
+                              {isChecked && (
                                 <span style={{ fontSize: 10, fontWeight: 800, color: '#059669', background: '#d1fae5', padding: '2px 6px', borderRadius: 4 }}>
                                   CORRECT
                                 </span>
@@ -976,6 +1076,55 @@ export default function QuestionReviewScreen({
                         })}
                       </div>
                     </div>
+                  ) : (
+                    q.options && q.options.length > 0 && (
+                      <div>
+                        <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 6 }}>
+                          Options & Correct Answer
+                        </label>
+                        <div style={{ display: 'grid', gap: 7 }}>
+                          {q.options.map((opt, oi) => {
+                            const isCorrect = q.correct_answer === oi
+                            return (
+                              <div
+                                key={oi}
+                                style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 8,
+                                  padding: '6px 10px',
+                                  borderRadius: 8,
+                                  border: `1.5px solid ${isCorrect ? '#10b981' : '#e2e8f0'}`,
+                                  background: isCorrect ? '#ecfdf5' : '#fff',
+                                }}
+                              >
+                                <input
+                                  type="radio"
+                                  name={`q_ans_${q.question_number}`}
+                                  checked={isCorrect}
+                                  onChange={() => updateQuestion(q.question_number, 'correct_answer', oi)}
+                                  style={{ accentColor: '#10b981', cursor: 'pointer' }}
+                                />
+                                <span style={{ fontWeight: 800, fontSize: 12, width: 22, color: isCorrect ? '#065f46' : '#64748b' }}>
+                                  ({opt.label || String.fromCharCode(65 + oi)})
+                                </span>
+                                <input
+                                  type="text"
+                                  value={opt.text}
+                                  onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
+                                  style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
+                                />
+                                {isCorrect && (
+                                  <span style={{ fontSize: 10, fontWeight: 800, color: '#059669', background: '#d1fae5', padding: '2px 6px', borderRadius: 4 }}>
+                                    CORRECT
+                                  </span>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
                   )}
 
                   {/* Marks & Section Row */}

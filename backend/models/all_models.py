@@ -151,8 +151,8 @@ class Quiz(Base):
 
     # relationships
     creator   : Mapped["User"]              = relationship("User", back_populates="quizzes")
-    questions : Mapped[list["Question"]]    = relationship("Question", back_populates="quiz", cascade="all, delete-orphan", order_by="Question.order_index")
-    sessions  : Mapped[list["QuizSession"]] = relationship("QuizSession", back_populates="quiz", cascade="all, delete-orphan")
+    questions : Mapped[list["Question"]]    = relationship("Question", back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True, order_by="Question.order_index")
+    sessions  : Mapped[list["QuizSession"]] = relationship("QuizSession", back_populates="quiz", cascade="all, delete-orphan", passive_deletes=True)
 
 
 # ── Question ──────────────────────────────────────────────────────────────────
@@ -188,9 +188,9 @@ class Question(Base):
 
     # relationships
     quiz        : Mapped["Quiz"]           = relationship("Quiz", back_populates="questions")
-    options     : Mapped[list["Option"]]   = relationship("Option", back_populates="question", cascade="all, delete-orphan", order_by="Option.order_index")
-    answers     : Mapped[list["Answer"]]   = relationship("Answer", back_populates="question")
-    explanations: Mapped[list["Explanation"]] = relationship("Explanation", back_populates="question", cascade="all, delete-orphan")
+    options     : Mapped[list["Option"]]   = relationship("Option", back_populates="question", cascade="all, delete-orphan", passive_deletes=True, order_by="Option.order_index")
+    answers     : Mapped[list["Answer"]]   = relationship("Answer", back_populates="question", cascade="all, delete-orphan", passive_deletes=True)
+    explanations: Mapped[list["Explanation"]] = relationship("Explanation", back_populates="question", cascade="all, delete-orphan", passive_deletes=True)
 
     __table_args__ = (
         Index("ix_questions_quiz_order", "quiz_id", "order_index"),
@@ -240,7 +240,8 @@ class QuizSession(Base):
 
     # relationships
     quiz     : Mapped["Quiz"]          = relationship("Quiz", back_populates="sessions")
-    attempts : Mapped[list["Attempt"]] = relationship("Attempt", back_populates="session", cascade="all, delete-orphan")
+    attempts : Mapped[list["Attempt"]] = relationship("Attempt", back_populates="session", cascade="all, delete-orphan", passive_deletes=True)
+    leaderboard_entries: Mapped[list["LeaderboardEntry"]] = relationship("LeaderboardEntry", cascade="all, delete-orphan", passive_deletes=True)
 
 
 # ── Attempt ───────────────────────────────────────────────────────────────────
@@ -271,7 +272,7 @@ class Attempt(Base):
     # relationships
     session  : Mapped["QuizSession"]  = relationship("QuizSession", back_populates="attempts")
     student  : Mapped["User"]         = relationship("User", back_populates="attempts")
-    answers  : Mapped[list["Answer"]] = relationship("Answer", back_populates="attempt", cascade="all, delete-orphan")
+    answers  : Mapped[list["Answer"]] = relationship("Answer", back_populates="attempt", cascade="all, delete-orphan", passive_deletes=True)
 
     __table_args__ = (
         UniqueConstraint("session_id", "student_id", name="uq_attempt_session_student"),
