@@ -1,4 +1,5 @@
 import { usePublishedQuizzes } from '../../hooks/usePublishedQuizzes.js'
+import { resumableSeconds } from '../../services/attemptStorage.js'
 
 function formatIST(dateStr) {
   if (!dateStr) return ''
@@ -291,13 +292,27 @@ export default function StudentHome({
                       View Result →
                     </button>
                   ) : availability.canStart ? (
-                    <button
-                      className="btn-pri"
-                      style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800 }}
-                      onClick={() => onTake(quiz)}
-                    >
-                      Start Test →
-                    </button>
+                    (() => {
+                      const left = resumableSeconds(user?.id, quiz.id)
+                      return left > 0 ? (
+                        <button
+                          className="btn-pri"
+                          style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800, background: 'linear-gradient(135deg,#f59e0b,#f97316)' }}
+                          title="Continue where you left off. Your answers are saved."
+                          onClick={() => onTake(quiz)}
+                        >
+                          ▶ Resume Test · {Math.floor(left / 60)}m left
+                        </button>
+                      ) : (
+                        <button
+                          className="btn-pri"
+                          style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800 }}
+                          onClick={() => onTake(quiz)}
+                        >
+                          Start Test →
+                        </button>
+                      )
+                    })()
                   ) : availability.status === 'scheduled' ? (
                     <button
                       className="btn-sec"

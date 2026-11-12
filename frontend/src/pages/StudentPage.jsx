@@ -12,6 +12,7 @@ import { useRoom } from '../hooks/useRoom.js'
 import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
 import { startQuizAttempt } from '../services/quizService.js'
 import MyProgress from '../components/Progress/MyProgress.jsx'
+import { resumableSeconds, clearAttempt } from '../services/attemptStorage.js'
 import { login as apiLogin } from '../services/authService.js'
 
 function formatIST(dateStr) {
@@ -168,18 +169,24 @@ export default function StudentPage({
 
   // Student clicks Start on a quiz card → show pre-test instruction screen FIRST
   const handleTake = (quiz) => {
-    setInstructionTarget(quiz)
     setStartError(null)
+    // An unfinished attempt on this device → skip the instructions and resume directly
+    if (resumableSeconds(user?.id, quiz.id) > 0) {
+      handleStartAttemptNow(quiz)
+      return
+    }
+    setInstructionTarget(quiz)
   }
 
-  // Pre-test instruction screen: Student clicks "Start Test Now"
-  const handleStartAttemptNow = async () => {
-    if (!instructionTarget || startingAttempt) return
+  // Pre-test instruction screen: Student clicks "Start Test Now" (or resume from the home card)
+  const handleStartAttemptNow = async (quizArg) => {
+    const target = (quizArg && quizArg.id) ? quizArg : instructionTarget
+    if (!target || startingAttempt) return
     setStartingAttempt(true)
     setStartError(null)
 
     try {
-      const resp = await startQuizAttempt(instructionTarget.id)
+      const resp = await startQuizAttempt(target.id)
       setSession({
         id: resp.session_id,
         room_code: '',
@@ -187,10 +194,10 @@ export default function StudentPage({
 
       // Update quiz effective duration if clamped by closing deadline
       const configuredQuiz = {
-        ...instructionTarget,
+        ...target,
         effectiveDurationSec: resp.duration_sec,
         effectiveDeadline: resp.effective_deadline,
-        timePerQ: Math.max(1, Math.round(resp.duration_sec / (instructionTarget.questions?.length || 1))),
+        timePerQ: Math.max(1, Math.round(resp.duration_sec / (target.questions?.length || 1))),
       }
 
       setInWaiting(false)
@@ -200,6 +207,9 @@ export default function StudentPage({
     } catch (err) {
       console.error('Failed to start attempt:', err)
       setStartError(err?.response?.data?.detail || 'Failed to start quiz attempt. Please check availability window.')
+      // Test already finished/closed on the server → forget the stale local copy
+      if ([400, 403, 404].includes(err?.response?.status)) clearAttempt(user?.id, target.id)
+      if (!instructionTarget) setInstructionTarget(target)
     } finally {
       setStartingAttempt(false)
     }
@@ -459,7 +469,7 @@ export default function StudentPage({
             type="button"
             className="btn-pri"
             style={{ flex: 2, padding: '12px', fontSize: 15, fontWeight: 900 }}
-            onClick={handleStartAttemptNow}
+            onClick={() => handleStartAttemptNow()}
             disabled={startingAttempt}
           >
             {startingAttempt ? 'Starting Test…' : 'Start Test Now →'}
@@ -526,7 +536,7 @@ export default function StudentPage({
 
   if (screen === 'quiz' && activeQuiz) return (
     <>
-      <QuizAttempt quiz={activeQuiz} userName={user?.name} onSubmit={handleSubmit} />
+      <QuizAttempt quiz={activeQuiz} userName={user?.name} userId={user?.id} onSubmit={handleSubmit} />
       {celebrationResult && (
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}

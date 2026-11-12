@@ -3,17 +3,19 @@ import CircularTimer from '../Common/CircularTimer.jsx'
 import Palette       from './Palette.jsx'
 import Lightbox      from '../Common/Lightbox.jsx'
 import { formatTime } from '../../services/utils.js'
+import { attemptKey, readAttempt, writeAttempt, clearAttempt } from '../../services/attemptStorage.js'
 
 const LABELS = ['A','B','C','D','E','F']
 
-export default function QuizAttempt({ quiz, userName, onSubmit }) {
+export default function QuizAttempt({ quiz, userName, userId = null, onSubmit }) {
   const questions = quiz.questions || []
   const perQ      = Math.max(1, Math.round(Number(quiz.timePerQ) || 300))
   const totalTime = Math.max(1, Math.round(quiz.effectiveDurationSec || (questions.length * perQ)))
 
-  const storageDeadlineKey = `quizee_attempt_${quiz.id}_deadline`
-  const storageAnswersKey  = `quizee_attempt_${quiz.id}_answers`
-  const storageTabSwitchesKey = `quizee_attempt_${quiz.id}_tab_switches`
+  // Saved per student + quiz so an accidental navigation / refresh resumes exactly here
+  const storageDeadlineKey    = attemptKey(userId, quiz.id, 'deadline')
+  const storageAnswersKey     = attemptKey(userId, quiz.id, 'answers')
+  const storageTabSwitchesKey = attemptKey(userId, quiz.id, 'tab_switches')
 
   const getTargetDeadlineMs = () => {
     if (quiz.effectiveDeadline) {
@@ -45,11 +47,14 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
       return raw ? JSON.parse(raw) : {}
     } catch { return {} }
   })
-  const [cur,      setCur]      = useState(0)
+  const [cur,      setCur]      = useState(() => {
+    const c = Number(readAttempt(userId, quiz.id, 'cur', 0))
+    return Number.isInteger(c) && c >= 0 && c < questions.length ? c : 0
+  })
   const [qTime,    setQTime]    = useState(perQ)
   const [totLeft,  setTotLeft]  = useState(getInitialTotLeft)
   const [confirm,  setConfirm]  = useState(false)
-  const [marked,   setMarked]   = useState(new Set())
+  const [marked,   setMarked]   = useState(() => new Set(readAttempt(userId, quiz.id, 'marked', []) || []))
   const [palette,  setPalette]  = useState(false)
   const [lightbox, setLightbox] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -59,14 +64,14 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   // ── Tab Switch / Strike Monitoring (3 violations max) ──
   const [tabSwitchCount, setTabSwitchCount] = useState(() => {
     try {
-      const saved = sessionStorage.getItem(storageTabSwitchesKey)
+      const saved = localStorage.getItem(storageTabSwitchesKey)
       return saved ? Math.min(3, Math.max(0, parseInt(saved, 10) || 0)) : 0
     } catch { return 0 }
   })
   const [tabWarningModal, setTabWarningModal] = useState(null)
 
-  const [qTimes,   setQTimes]   = useState({})
-  const [totalSpent, setTotalSpent] = useState(0)
+  const [qTimes,   setQTimes]   = useState(() => readAttempt(userId, quiz.id, 'qtimes', {}) || {})
+  const [totalSpent, setTotalSpent] = useState(() => Number(readAttempt(userId, quiz.id, 'spent', 0)) || 0)
   const [lastVisitedPerSec, setLastVisitedPerSec] = useState({})
 
   const answersRef          = useRef(answers)
@@ -92,7 +97,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   useEffect(() => {
     tabSwitchCountRef.current = tabSwitchCount
     try {
-      sessionStorage.setItem(storageTabSwitchesKey, String(tabSwitchCount))
+      localStorage.setItem(storageTabSwitchesKey, String(tabSwitchCount))
     } catch {}
   }, [tabSwitchCount, storageTabSwitchesKey])
 
@@ -104,10 +109,21 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     return () => clearTimeout(timer)
   }, [])
 
-  useEffect(() => { markedRef.current  = marked  }, [marked])
-  useEffect(() => { qTimesRef.current  = qTimes  }, [qTimes])
-  useEffect(() => { totalSpentRef.current = totalSpent }, [totalSpent])
-  useEffect(() => { curRef.current = cur }, [cur])
+  useEffect(() => { markedRef.current  = marked; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'marked', [...marked]) }, [marked]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { qTimesRef.current  = qTimes; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'qtimes', qTimes) }, [qTimes]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { totalSpentRef.current = totalSpent; if (!submittedRef.current && totalSpent % 5 === 0) writeAttempt(userId, quiz.id, 'spent', totalSpent) }, [totalSpent]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { curRef.current = cur; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'cur', cur) }, [cur]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Warn before closing / refreshing the tab mid-test (answers are kept either way)
+  useEffect(() => {
+    const onBeforeUnload = e => {
+      if (submittedRef.current) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
 
   // Track last visited question index per section
   useEffect(() => {
@@ -155,11 +171,12 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         )
         // Mark as submitted and clean up storage only after confirmed success
         submittedRef.current = true
+        clearAttempt(userId, quiz.id)
         try {
           localStorage.removeItem(storageDeadlineKey)
           localStorage.removeItem(storageAnswersKey)
           sessionStorage.removeItem(storageAnswersKey)
-          sessionStorage.removeItem(storageTabSwitchesKey)
+          localStorage.removeItem(storageTabSwitchesKey)
         } catch {}
       } catch (err) {
         console.error('Quiz submission failed:', err)
@@ -191,7 +208,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     tabSwitchCountRef.current = nextCount
     setTabSwitchCount(nextCount)
     try {
-      sessionStorage.setItem(storageTabSwitchesKey, String(nextCount))
+      localStorage.setItem(storageTabSwitchesKey, String(nextCount))
     } catch {}
 
     if (nextCount === 1) {
