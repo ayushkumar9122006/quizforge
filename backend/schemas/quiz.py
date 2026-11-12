@@ -25,6 +25,9 @@ class OptionOut(BaseModel):
 class QuestionCreate(BaseModel):
     order_index: int = 0
     section: str = "General"
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str = ""
     question_image: Optional[str] = None
     content_type: ContentType = ContentType.text
@@ -44,6 +47,9 @@ class QuestionOut(BaseModel):
     id: str
     order_index: int
     section: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str
     question_image: Optional[str] = None
     content_type: ContentType
@@ -175,6 +181,7 @@ class QuestionStudentOut(BaseModel):
     id: str
     order_index: int
     section: str
+    subject: Optional[str] = None
     text: str
     question_image: Optional[str] = None
     content_type: ContentType
@@ -279,7 +286,10 @@ class BulkImportQuestionItem(BaseModel):
     question_number: int
     question_type: str = "single_correct" # "single_correct" | "multi_correct" | "numerical" | "assertion_reason" | "match_column"
     section: str = "General"
+    subject: Optional[str] = None
     topic: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str = ""
     question_image: Optional[str] = None # base64 data URL of diagram or statement
     diagram: Optional[str] = None
@@ -310,3 +320,34 @@ class BulkImportAnalyzeResponse(BaseModel):
 class BulkImportConfirmRequest(BaseModel):
     questions: List[QuestionCreate]
 
+
+
+# ── Chapter tagging schemas ───────────────────────────────────────────────────
+
+class ChapterSuggestItem(BaseModel):
+    key: str                      # caller-defined id (question id or import index)
+    text: str = ""
+    subject: Optional[str] = None
+
+
+class ChapterSuggestRequest(BaseModel):
+    items: List[ChapterSuggestItem] = Field(default_factory=list, max_length=60)
+    use_ai: bool = True
+
+
+class ChapterSuggestion(BaseModel):
+    key: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    source: Optional[str] = None
+    confidence: float = 0.0
+
+
+class QuestionChapterUpdate(BaseModel):
+    question_id: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+
+
+class QuestionChapterBulkUpdate(BaseModel):
+    updates: List[QuestionChapterUpdate]

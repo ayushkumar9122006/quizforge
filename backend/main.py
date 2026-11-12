@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 import os
 
 from database.config import init_db, settings
-from routers import auth, quiz, session, llm, notice
+from routers import auth, quiz, session, llm, notice, progress
 from routers import ws as ws_router
 
 
@@ -66,6 +66,7 @@ app.include_router(quiz.router)
 app.include_router(session.router)
 app.include_router(llm.router)
 app.include_router(notice.router)
+app.include_router(progress.router)
 
 # ── WebSocket router ──────────────────────────────────────────────────────────
 app.include_router(ws_router.router)

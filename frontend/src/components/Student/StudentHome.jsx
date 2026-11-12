@@ -22,6 +22,7 @@ export default function StudentHome({
   user,
   onTake,
   onHistory,
+  onProgress,
   onAnalytics,
   onLogout,
   attempts = [],
@@ -105,7 +106,12 @@ export default function StudentHome({
           <h2 style={{ fontSize: 24, fontWeight: 900, margin: '0 0 4px', color: '#111827' }}>Available Tests</h2>
           <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>Welcome back, <strong style={{ color: '#111827' }}>{user?.name}</strong>!</p>
         </div>
-        <div style={{ display: 'flex', gap: 9 }}>
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+          {onProgress && (
+            <button className="btn-pri" onClick={onProgress} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📈 My Progress
+            </button>
+          )}
           <button className="btn-sec" onClick={onOpenNotices} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             📢 Notices {unreadCount > 0 && <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 10, padding: '1px 6px' }}>{unreadCount}</span>}
           </button>
@@ -115,6 +121,21 @@ export default function StudentHome({
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
         </div>
       </div>
+
+      {onProgress && (histCount || attempts.length) > 0 && (
+        <div
+          onClick={onProgress}
+          role="button"
+          style={{ marginBottom: 20, padding: '14px 18px', borderRadius: 16, cursor: 'pointer', background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', gap: 14 }}
+        >
+          <span style={{ fontSize: 28 }} aria-hidden>🎯</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, color: '#312e81', fontSize: 15 }}>See if you're improving</div>
+            <div style={{ fontSize: 13, color: '#4f46e5' }}>Your score curve across {histCount || attempts.length} test{(histCount || attempts.length) !== 1 ? 's' : ''}, the chapters you keep getting wrong, and what to revise next.</div>
+          </div>
+          <span style={{ fontWeight: 800, color: '#4338ca' }}>→</span>
+        </div>
+      )}
 
       {/* Notice Alert Banner (if unread notices exist) */}
       {unreadCount > 0 && (

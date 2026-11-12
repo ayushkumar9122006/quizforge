@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import ChapterSelect, { useSyllabus } from '../Progress/ChapterSelect.jsx'
+import { suggestChapters, questionTextForTagging, inferSubjectFromSection } from '../../services/progressService.js'
 import QuestionImagePanel from '../OCR/QuestionImagePanel.jsx'
 import CropFromSource     from '../OCR/CropFromSource.jsx'
 
@@ -146,6 +148,8 @@ export default function QuestionEditor({
     target:  null,   // 'question' | 'optionA' | 'optionB' | 'optionC' | 'optionD' | 'diagram'
   })
 
+  const syllabus = useSyllabus()
+  const [suggesting, setSuggesting] = useState(false)
   const q      = questions[cur] || {}
   const srcImg = q.questionCropSrc   // the cropped single-question image = source for all sub-crops
 
@@ -166,16 +170,36 @@ export default function QuestionEditor({
     return { ...x, options: o, correct: nc }
   }))
 
+  const setTag = next => setQuestions(p => p.map((x, i) => i === cur ? { ...x, ...next } : x))
+  const changeType = t => setQuestions(p => p.map((x, i) => {
+    if (i !== cur) return x
+    if (t === 'numerical') return { ...x, question_type: t, options: [], correct: null }
+    return { ...x, question_type: t, options: (x.options && x.options.length >= 2) ? x.options : ['', '', '', ''] }
+  }))
+  const suggestForCurrent = async () => {
+    const text = questionTextForTagging(q)
+    if (text.length < 8) { alert('Type the question text first. Image-only questions need a manual chapter.'); return }
+    setSuggesting(true)
+    try {
+      const [res] = await suggestChapters([{ key: String(q.id), text, subject: q.subject || inferSubjectFromSection(q.section) }])
+      if (res?.chapter) setTag({ subject: res.subject, chapter: res.chapter, chapter_source: res.source })
+      else alert('No confident suggestion. Please pick the chapter.')
+    } catch { alert('Suggestion failed. Please pick the chapter manually.') }
+    finally { setSuggesting(false) }
+  }
+
   // ── Question Management: Add, Delete, Reorder ───────────────────────────────
   const addQuestion = () => {
     const curSec = q.section || 'Section A'
     const newQ = {
       id: uid(),
       text: '',
-      options: ['', '', '', ''],
+      options: q.question_type === 'numerical' ? [] : ['', '', '', ''],
       correct: null,
       explanation: '',
       section: curSec,
+      subject: q.subject || null,
+      question_type: q.question_type || 'single_correct',
       diagram: null,
       positive_marks: q.positive_marks !== undefined ? q.positive_marks : 4,
       negative_marks: q.negative_marks !== undefined ? q.negative_marks : 1,
@@ -258,6 +282,9 @@ export default function QuestionEditor({
     const hasText  = q.text?.trim().length > 0
     const hasImage = !!q.qImage
     const hasQ     = hasText || hasImage
+    if (q.question_type === 'numerical') {
+      return hasQ && /^[-+]?\d+(\.\d{1,2})?$/.test(String(q.raw_answer ?? '').trim())
+    }
     const hasOpts  = q.options.length >= 2 && q.options.every(optValid)
     return hasQ && hasOpts
   }
@@ -310,6 +337,19 @@ export default function QuestionEditor({
           <span style={{ fontSize:13, color:'#64748b' }}>
             Q{qInSec}/{totInSec} in section · Overall {cur + 1}/{questions.length}
           </span>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap', width:'100%', order: 3, padding:'8px 10px', background:'#f8fafc', border:'1px solid #eef2f7', borderRadius:10 }}>
+          <select className="inp-sm" aria-label="Question type" value={q.question_type || 'single_correct'} onChange={e => changeType(e.target.value)} style={{ fontSize:12 }}>
+            <option value="single_correct">MCQ single</option>
+            <option value="multi_correct">MCQ multi</option>
+            <option value="numerical">Numerical</option>
+            <option value="match_column">Match column</option>
+            <option value="assertion_reason">Assertion–Reason</option>
+          </select>
+          <ChapterSelect compact syllabus={syllabus} value={{ subject: q.subject || inferSubjectFromSection(q.section), chapter: q.chapter, chapter_source: q.chapter_source }} onChange={setTag} />
+          <button type="button" className="btn-sec" style={{ fontSize:12, padding:'5px 10px' }} disabled={suggesting} onClick={suggestForCurrent}>
+            {suggesting ? 'Suggesting…' : '✨ Suggest chapter'}
+          </button>
         </div>
         <div style={{ display:'flex', alignItems:'center', gap:8, flexWrap:'wrap' }}>
           <button
@@ -415,6 +455,15 @@ export default function QuestionEditor({
               placeholder="Or type question text here (optional if image set)"
               style={{ marginBottom:14, marginTop:6 }} />
 
+            {q.question_type === 'numerical' ? (
+              <div style={{ marginBottom:14 }}>
+                <label className="lbl">Correct numerical answer</label>
+                <input className="inp" inputMode="decimal" value={q.raw_answer ?? ''} onChange={e => upQ('raw_answer', e.target.value)}
+                  placeholder="e.g. 12 or 2.45 (up to 2 decimals)" style={{ maxWidth:260 }} />
+                <p style={{ fontSize:12, color:'#94a3b8', margin:'6px 0 0' }}>Students' answers within ±0.01 are marked correct.</p>
+              </div>
+            ) : (
+              <>
             {/* Options */}
             <label className="lbl">
               Options
@@ -478,6 +527,8 @@ export default function QuestionEditor({
               <button onClick={addOpt} style={{ fontSize:12,color:'#6366f1',background:'none',border:'1.5px dashed #c4b5fd',borderRadius:8,padding:'5px 12px',cursor:'pointer',marginBottom:12,fontWeight:700 }}>
                 + Add option
               </button>
+            )}
+              </>
             )}
 
             <label className="lbl" style={{ marginTop:4 }}>

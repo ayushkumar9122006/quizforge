@@ -160,3 +160,43 @@ Connect to a live quiz room. Token is passed as query param (browser WebSocket l
 ```json
 { "status": "ok", "version": "3.0.0", "model": "meta-llama/llama-3.1-8b-instruct:free" }
 ```
+
+---
+
+## Progress Analytics (JEE full-syllabus tracking)
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/progress/syllabus` | Any | JEE Main subjects → chapters, plus `ai_enabled` |
+| GET | `/progress/me` | Any | Own progress across all submitted tests |
+| GET | `/progress/attempts/{attempt_id}/report` | Owner / Admin | One test: rank, percentile, subject ranks, mistakes by chapter |
+| GET | `/progress/students` | Admin | Every student with trend + weakest chapter |
+| GET | `/progress/students/{student_id}` | Admin | One student's full progress (same shape as `/progress/me`) |
+| GET | `/progress/batch` | Admin | Students, per-test averages, batch weak chapters |
+| POST | `/progress/chapters/suggest` | Admin | Chapter suggestions for up to 60 question texts |
+| PUT | `/quizzes/{quiz_id}/chapters` | Admin | Save / confirm subject + chapter per question (`chapter_source = admin`) |
+| POST | `/quizzes/{quiz_id}/chapters/auto-tag` | Admin | Suggest chapters for untagged questions (AI, else keywords) |
+
+Definitions used everywhere:
+- **Percentile** (NTA style): `100 × (students with score ≤ yours) / students in that test`.
+- **Mistake %**: wrong ÷ attempted in that chapter. **Skipped %**: skipped ÷ questions.
+- **Recurring weakness 🔁**: wrong in ≥ 2 tests and in at least half of the tests the chapter appeared in.
+- **Trend**: least-squares slope over the last 6 tests. It uses percentile across tests with ≥ 5 participants, otherwise score %. ±1.5 pts/test = improving/declining.
+- Answers are classified correct / partial (multi-correct partial credit) / wrong / skipped.
+
+### GET /progress/me (abridged)
+```json
+{
+  "tests_taken": 4,
+  "summary": { "average_score_pct": 46.4, "average_percentile": 52.23,
+               "trend": { "label": "improving", "metric": "percentile", "slope": 12.7, "last_vs_prev": 25.6 } },
+  "timeline": [{ "quiz_title": "...", "score": 53, "total_marks": 96, "rank": 4, "participants": 7, "percentile": 71.43,
+                 "subjects": { "Physics": { "score_pct": 59.4 } } }],
+  "subject_trends": [{ "subject": "Physics", "average_score_pct": 43.0, "trend": { "label": "improving" } }],
+  "chapters": [{ "subject": "Physics", "chapter": "Rotational Motion", "mistake_pct": 50, "skip_pct": 50,
+                 "tests_with_mistakes": 1, "tests_appeared": 4, "recurring": false, "history": [ ... ] }],
+  "weak_chapters": [{ "...": "...", "diagnosis": "concept_gap", "advice": "..." }],
+  "study_plan": [{ "priority": 1, "chapter": "...", "why": "...", "action": "..." }],
+  "insights": [{ "kind": "negative_marking", "text": "..." }]
+}
+```

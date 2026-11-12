@@ -170,6 +170,11 @@ class Question(Base):
     quiz_id        : Mapped[str]          = mapped_column(String(36), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
     order_index    : Mapped[int]          = mapped_column(Integer, nullable=False, default=0)
     section        : Mapped[str]          = mapped_column(String(255), default="General", nullable=False)
+    # Syllabus tagging used for cross-test weakness analysis.
+    # subject: Physics | Chemistry | Mathematics (section stays free-form, e.g. "Physics – Section A (MCQ)")
+    subject        : Mapped[str|None]     = mapped_column(String(50), nullable=True, index=True)
+    chapter        : Mapped[str|None]     = mapped_column(String(120), nullable=True, index=True)
+    chapter_source : Mapped[str|None]     = mapped_column(String(20), nullable=True)  # ai | keyword | admin
     text           : Mapped[str]          = mapped_column(Text, default="", nullable=False)
     question_image : Mapped[str|None]     = mapped_column(Text, nullable=True)  # file path OR base64 data URL
     content_type   : Mapped[ContentType]  = mapped_column(String(20), default=ContentType.text.value)

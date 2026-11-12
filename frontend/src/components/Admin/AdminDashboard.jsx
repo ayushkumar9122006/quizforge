@@ -13,6 +13,8 @@ import AnalyticsDashboard from './Analytics/AnalyticsDashboard.jsx'
 import PdfUploadModal from './BulkImport/PdfUploadModal.jsx'
 import QuestionReviewScreen from './BulkImport/QuestionReviewScreen.jsx'
 import AdminNoticeManager from './AdminNoticeManager.jsx'
+import BatchInsights from './BatchInsights.jsx'
+import ChapterTagger from './ChapterTagger.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return 'Open / No deadline'
@@ -67,6 +69,7 @@ export default function AdminDashboard({ onLogout }) {
   const [activeSession, setActiveSession] = useState(null)
   const [activeQuiz, setActiveQuiz] = useState(null)
   const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
+  const [taggingQuizId, setTaggingQuizId] = useState(null)
   const [uploadingPdfQuizId, setUploadingPdfQuizId] = useState(null)
   const [showBulkModal, setShowBulkModal] = useState(false)
   const [bulkTargetQuizId, setBulkTargetQuizId] = useState(null)
@@ -350,6 +353,14 @@ export default function AdminDashboard({ onLogout }) {
     <AdminNoticeManager onBack={() => setScreen('dash')} />
   )
 
+  if (screen === 'batch') return (
+    <BatchInsights onBack={() => setScreen('dash')} />
+  )
+
+  if (screen === 'chapters' && taggingQuizId) return (
+    <ChapterTagger quizId={taggingQuizId} onBack={() => { setScreen('dash'); setTaggingQuizId(null); reload() }} />
+  )
+
   // ── Dashboard ────────────────────────────────────────────────────────────────
   return (
     <div style={{ maxWidth: 900, margin: '0 auto', padding: '2rem 1.5rem' }}>
@@ -477,6 +488,13 @@ export default function AdminDashboard({ onLogout }) {
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
           <button
             className="btn-sec"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#4338ca', borderColor: '#c7d2fe', background: '#eef2ff', fontWeight: 800 }}
+            onClick={() => setScreen('batch')}
+          >
+            👥 Students & Progress
+          </button>
+          <button
+            className="btn-sec"
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             onClick={() => setScreen('notices')}
           >
@@ -523,6 +541,7 @@ export default function AdminDashboard({ onLogout }) {
           const hasPdf = Boolean(quiz.solution_pdf || quiz.solution_pdf_name)
           const isBusy = uploadingPdfQuizId === quiz.id
           const hasWindow = Boolean(quiz.availability_start || quiz.availability_end)
+          const untaggedCount = (quiz.questions || []).filter(q => !q.chapter).length
 
           return (
             <div key={quiz.id} className="quiz-row" style={{ flexWrap: 'wrap', gap: 12, padding: '1.2rem 1.4rem' }}>
@@ -620,6 +639,14 @@ export default function AdminDashboard({ onLogout }) {
                   onClick={() => { setBulkTargetQuizId(quiz.id); setShowBulkModal(true) }}
                 >
                   ⚡ +PDF Qs
+                </button>
+                <button
+                  className="btn-sec"
+                  style={{ fontSize: 12, padding: '6px 11px', ...(untaggedCount > 0 ? { color: '#b45309', borderColor: '#fcd34d', background: '#fffbeb', fontWeight: 800 } : {}) }}
+                  title="Tag questions with subject + chapter for weak-chapter analysis"
+                  onClick={() => { setTaggingQuizId(quiz.id); setScreen('chapters') }}
+                >
+                  🏷 Chapters{untaggedCount > 0 ? ` (${untaggedCount} untagged)` : ''}
                 </button>
                 <button
                   className="btn-sec"

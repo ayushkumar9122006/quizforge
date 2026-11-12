@@ -29,7 +29,7 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
   const [solutionPdf, setSolutionPdf] = useState(null)
   const [solutionPdfName, setSolutionPdfName] = useState('')
   const [pdfUploading, setPdfUploading] = useState(false)
-  const [sections, setSections] = useState([{ name: 'Section A', count: 5 }])
+  const [sections, setSections] = useState([{ subject: 'Physics', name: 'Physics – Section A (MCQ)', type: 'single_correct', count: 5 }])
 
   // Test Availability Window (Asia/Kolkata IST)
   // Default to today/tomorrow in IST
@@ -49,7 +49,30 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
   const [availEnd, setAvailEnd] = useState(toLocalInput(tomorrow))
   const [enableWindow, setEnableWindow] = useState(true)
 
-  const addSec = () => setSections(s => [...s, { name: `Section ${String.fromCharCode(65 + s.length)}`, count: 5 }])
+  const addSec = () => setSections(s => {
+    const last = s[s.length - 1] || {}
+    return [...s, { subject: last.subject || '', name: `${last.subject ? last.subject + ' – ' : ''}Section ${String.fromCharCode(65 + s.length)}`, type: 'single_correct', count: 5 }]
+  })
+  // JEE Main pattern: each subject has 20 MCQs (Section A) + 5 numericals (Section B), 180 minutes
+  const applyJeeMainTemplate = () => {
+    const rows = []
+    ;['Physics', 'Chemistry', 'Mathematics'].forEach(subj => {
+      rows.push({ subject: subj, name: `${subj} – Section A (MCQ)`, type: 'single_correct', count: 20 })
+      rows.push({ subject: subj, name: `${subj} – Section B (Numerical)`, type: 'numerical', count: 5 })
+    })
+    setSections(rows)
+    setTotalDuration('180.00')
+    setPosMarks(4)
+    setNegMarks(1)
+    if (!title) setTitle('JEE Main Full Syllabus Test')
+  }
+  const upSubject = (i, subj) => setSections(s => s.map((x, j) => {
+    if (j !== i) return x
+    // keep section names unique per subject: rename when the name still carries the old subject prefix or is generic
+    const generic = !x.name || /^(physics|chemistry|mathematics)?\s*–?\s*section\b/i.test(x.name)
+    const rest = x.name.replace(/^(physics|chemistry|mathematics)\s*–\s*/i, '')
+    return { ...x, subject: subj, name: generic && subj ? `${subj} – ${rest}` : x.name }
+  }))
   const remSec = i => setSections(s => s.filter((_, j) => j !== i))
   const upSec = (i, f, v) => setSections(s => s.map((x, j) => j === i ? { ...x, [f]: v } : x))
   const totalQ = sections.reduce((a, s) => a + Number(s.count), 0)
@@ -154,10 +177,12 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
         questions.push({
           id: uid(),
           text: '',
-          options: ['', '', '', ''],
           correct: null,
           explanation: '',
           section: sec.name,
+          subject: sec.subject || null,
+          question_type: sec.type || 'single_correct',
+          options: sec.type === 'numerical' ? [] : ['', '', '', ''],
           diagram: null,
           positive_marks: Number(posMarks) || 4,
           negative_marks: Number(negMarks) || 0
@@ -177,7 +202,7 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
   }
 
   return (
-    <div style={{ maxWidth: 560, margin: '0 auto', padding: '2rem 1.5rem' }}>
+    <div style={{ maxWidth: 720, margin: '0 auto', padding: '2rem 1.5rem' }}>
       <button className="btn-ghost" onClick={onBack} style={{ marginBottom: 18 }}>← Back</button>
       <h2 style={{ fontSize: 22, fontWeight: 900, margin: '0 0 4px', color: '#111827' }}>Configure Quiz</h2>
       <p style={{ color: '#6b7280', fontSize: 14, marginBottom: 20 }}>
@@ -327,19 +352,39 @@ export default function SectionConfig({ onDone, onBack, onBulkImportClick }) {
       {/* Sections Config */}
       <div className="card" style={{ marginBottom: 16 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-          <label className="lbl" style={{ margin: 0 }}>Sections</label>
-          <button onClick={addSec} style={{ fontSize: 12, fontWeight: 700, color: '#6366f1', background: 'none', border: '1.5px dashed #c4b5fd', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>
-            + Add section
-          </button>
+          <label className="lbl" style={{ margin: 0 }}>Subjects & Sections</label>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <button onClick={applyJeeMainTemplate} style={{ fontSize: 12, fontWeight: 800, color: '#fff', background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', border: 'none', borderRadius: 7, padding: '5px 11px', cursor: 'pointer' }}>
+              ⚡ JEE Main template
+            </button>
+            <button onClick={addSec} style={{ fontSize: 12, fontWeight: 700, color: '#6366f1', background: 'none', border: '1.5px dashed #c4b5fd', borderRadius: 7, padding: '4px 11px', cursor: 'pointer' }}>
+              + Add section
+            </button>
+          </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 110px 34px', gap: 9, marginBottom: 7 }}>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' }}>Name</span>
-          <span style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' }}>Questions</span>
+        <p style={{ fontSize: 12, color: '#6b7280', margin: '0 0 10px' }}>
+          Pick the subject for every section. Progress analytics groups results by subject, and chapters are tagged per question.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '128px 1fr 120px 70px 34px', gap: 9, marginBottom: 7 }}>
+          {['Subject', 'Section name', 'Type', 'Qs'].map(h => <span key={h} style={{ fontSize: 11, fontWeight: 700, color: '#9ca3af', textTransform: 'uppercase', letterSpacing: '.04em' }}>{h}</span>)}
           <span />
         </div>
         {sections.map((sec, i) => (
-          <div key={i} className="sec-row">
+          <div key={i} className="sec-row" style={{ gridTemplateColumns: '128px 1fr 120px 70px 34px' }}>
+            <select className="inp-sm" value={sec.subject || ''} onChange={e => upSubject(i, e.target.value)} aria-label="Subject">
+              <option value="">— Subject —</option>
+              <option value="Physics">Physics</option>
+              <option value="Chemistry">Chemistry</option>
+              <option value="Mathematics">Mathematics</option>
+            </select>
             <input className="inp-sm" value={sec.name} onChange={e => upSec(i, 'name', e.target.value)} placeholder={`Section ${i + 1}`} />
+            <select className="inp-sm" value={sec.type || 'single_correct'} onChange={e => upSec(i, 'type', e.target.value)} aria-label="Question type">
+              <option value="single_correct">MCQ single</option>
+              <option value="multi_correct">MCQ multi</option>
+              <option value="numerical">Numerical</option>
+              <option value="match_column">Match column</option>
+              <option value="assertion_reason">Assertion–Reason</option>
+            </select>
             <input type="number" className="inp-sm" min={1} max={100} value={sec.count} onChange={e => upSec(i, 'count', Math.max(1, +e.target.value))} />
             {sections.length > 1
               ? <button onClick={() => remSec(i)} style={{ width: 32, height: 32, borderRadius: 7, border: '1.5px solid #fca5a5', background: '#fff1f2', color: '#dc2626', cursor: 'pointer', fontWeight: 800, fontSize: 16 }}>×</button>

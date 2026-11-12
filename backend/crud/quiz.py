@@ -1,10 +1,30 @@
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
-from models.all_models import Quiz, Question, Option, QuizStatus
+from models.all_models import Quiz, Question, Option, QuizStatus, ContentType
 from schemas.quiz import QuizCreate, QuizUpdate
+from services.jee_syllabus import infer_subject, canonical_chapter, subject_of_chapter
 from typing import Optional, List
 import uuid
+
+
+def tag_fields(q_data, fallback_subject: Optional[str] = None) -> dict:
+    """
+    Normalise subject / chapter / chapter_source from an incoming question payload.
+    - subject: explicit value, else inferred from the section name ("Physics – Section A")
+    - chapter: must be a known syllabus chapter (unknown names are dropped)
+    - chapter_source: ai | keyword | admin (defaults to admin when a chapter is given)
+    """
+    chapter = canonical_chapter(getattr(q_data, "chapter", None))
+    subject = infer_subject(getattr(q_data, "subject", None), getattr(q_data, "section", None), fallback_subject)
+    if chapter:
+        subject = subject_of_chapter(chapter) or subject
+    source = getattr(q_data, "chapter_source", None)
+    if chapter:
+        source = source if source in ("ai", "keyword", "admin") else "admin"
+    else:
+        source = None
+    return {"subject": subject, "chapter": chapter, "chapter_source": source}
 
 
 def _new_id() -> str:
@@ -49,6 +69,7 @@ async def create_quiz(db: AsyncSession, data: QuizCreate, creator_id: str) -> Qu
             quiz_id=quiz.id,
             order_index=i,
             section=q_data.section,
+            **tag_fields(q_data, data.subject),
             text=q_data.text,
             question_image=q_data.question_image,
             content_type=q_data.content_type,
@@ -210,6 +231,7 @@ async def add_questions_to_quiz(db: AsyncSession, quiz_id: str, new_questions: L
             quiz_id=quiz.id,
             order_index=current_count + i,
             section=q_data.section or "General",
+            **tag_fields(q_data, quiz.subject),
             text=q_data.text or "",
             question_image=q_data.question_image,
             content_type=getattr(q_data, "content_type", None) or ContentType.text,

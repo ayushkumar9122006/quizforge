@@ -1,5 +1,25 @@
 # Changelog
 
+## [Unreleased] — JEE progress analytics
+
+### Added
+- **Subject + chapter on every question** (`questions.subject`, `chapter`, `chapter_source`; migration `0010`). Subject is backfilled from section names like "Physics – Section A".
+- **JEE Main syllabus list** (`services/jee_syllabus.py`): 74 chapters across Physics / Chemistry / Maths, with keyword hints.
+- **Chapter tagging** (`services/chapter_tagger.py`): AI picks from the fixed list (OpenRouter), keyword fallback with no key, majority-subject correction for single-subject papers. Suggestions are stored as `ai` / `keyword` until an admin confirms (`admin`).
+- **PDF import**: detects "PHYSICS / CHEMISTRY / MATHEMATICS" headings; the review screen auto-suggests chapters and has a per-question subject/chapter picker plus "set subject for all".
+- **Quiz setup**: subject + question type per section, one-click *JEE Main template* (3 × (20 MCQ + 5 numerical), 180 min, +4/−1).
+- **Question editor**: question-type selector, numerical answer field, chapter picker with "Suggest chapter".
+- **Admin → 🏷 Chapters** screen per quiz: suggest for untagged, confirm all, filter by untagged / needs confirmation.
+- **Progress API** (`routers/progress.py`, `services/progress_service.py`): attempt report, student progress, batch insights.
+- **Results → 🎯 Rank & Mistakes** tab: rank, percentile, subject-wise rank vs topper/average, marks lost to wrong vs skipped, chapter losses vs batch accuracy, score curve across all tests, mistake % per chapter.
+- **Student → 📈 My Progress**: trend (improving / steady / declining), score + percentile curve, subject trends, focus list with diagnosis and advice, chapter × test mistake grid, sortable chapter table, strong chapters, question-type accuracy, test history.
+- **Admin → 👥 Students & Progress**: student list with sparkline and trend, drill-down to any student, batch weak chapters (students struggling), batch average per test.
+
+### Fixed
+- Section score on the immediate results screen ignored multi-correct partial marks and numerical negatives.
+- `crud/quiz.py` referenced `ContentType` without importing it.
+
+
 All notable changes made during the production-readiness pass are documented here.
 
 ## [Unreleased] — Production Readiness Pass

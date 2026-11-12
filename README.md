@@ -23,6 +23,9 @@ QuizForge is a full-stack, real-time quiz platform:
 
 **Stack:** FastAPI (async SQLAlchemy 2.0) · PostgreSQL 16 · Alembic migrations · JWT auth · native WebSockets · React 18 + Vite · Recharts.
 
+### JEE progress analytics
+Every question carries a **subject** and a **JEE syllabus chapter**: the AI suggests and the admin confirms. From that, students get a **My Progress** dashboard showing whether they are improving test after test, which chapters they keep getting wrong, and what to revise next. Every result screen shows rank, percentile, subject-wise rank and where the marks were lost. Admins get a **Students & Progress** view with per-student drill-down and the chapters the whole batch struggles with. See `docs/API.md → Progress Analytics`.
+
 ---
 
 ## 2. Installation
@@ -103,7 +106,7 @@ alembic revision -m "describe your change"
 alembic downgrade -1
 ```
 
-The migration chain is `0001` (initial schema) → `0002` (widen image columns) → `0003` (drop orphan enum types). All three are required — always run `alembic upgrade head`, not just `0001`.
+The migration chain runs `0001` → `0010` (latest: `0010` adds question subject/chapter for progress analytics). Always run `alembic upgrade head`.
 
 Optionally seed a demo admin/student:
 ```bash

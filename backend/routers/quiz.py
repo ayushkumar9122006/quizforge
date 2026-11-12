@@ -6,7 +6,8 @@ from database.config import get_db
 from schemas.quiz import (
     QuizCreate, QuizUpdate, QuizOut, QuizStudentOut,
     QuizAvailabilityUpdate,
-    BulkImportAnalyzeResponse, BulkImportConfirmRequest
+    BulkImportAnalyzeResponse, BulkImportConfirmRequest,
+    QuestionChapterBulkUpdate,
 )
 from schemas.session import StartQuizResponse
 from crud.quiz import (
@@ -378,6 +379,7 @@ async def import_analyze_pdf(
     default_pos_marks: float = Form(4.0),
     default_neg_marks: float = Form(1.0),
     default_section: str = Form("General"),
+    default_subject: str = Form(""),
     admin: User = Depends(require_admin),
 ):
     """
@@ -407,6 +409,7 @@ async def import_analyze_pdf(
             default_pos_marks=default_pos_marks,
             default_neg_marks=default_neg_marks,
             default_section=default_section,
+            default_subject=default_subject or None,
         )
         return response
     except Exception as e:
@@ -440,3 +443,89 @@ async def import_confirm_questions(
     updated_quiz = await add_questions_to_quiz(db, quiz_id, payload.questions)
     return updated_quiz
 
+
+
+# ── Chapter tagging (for cross-test weakness analysis) ─────────────────────────
+
+@router.put("/{quiz_id}/chapters", response_model=QuizOut)
+async def update_question_chapters(
+    quiz_id: str,
+    payload: QuestionChapterBulkUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Admin confirms / edits subject + chapter for questions of a quiz (stored as source=admin)."""
+    from services.jee_syllabus import canonical_chapter, normalize_subject, subject_of_chapter
+
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    by_id = {q.id: q for q in quiz.questions}
+    bad = []
+    for u in payload.updates:
+        q = by_id.get(u.question_id)
+        if not q:
+            bad.append(u.question_id)
+            continue
+        chapter = canonical_chapter(u.chapter)
+        if u.chapter and not chapter:
+            raise HTTPException(status_code=400, detail=f"Unknown chapter: {u.chapter}")
+        subject = normalize_subject(u.subject) or subject_of_chapter(chapter)
+        if chapter and subject and subject_of_chapter(chapter) != subject:
+            raise HTTPException(status_code=400, detail=f"Chapter '{chapter}' is not part of {subject}")
+        q.subject = subject
+        q.chapter = chapter
+        q.chapter_source = "admin" if chapter else None
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Questions not in this quiz: {', '.join(bad[:5])}")
+    await db.flush()
+    db.expire_all()
+    return await get_quiz(db, quiz_id)
+
+
+@router.post("/{quiz_id}/chapters/auto-tag", response_model=QuizOut)
+async def auto_tag_chapters(
+    quiz_id: str,
+    overwrite_suggestions: bool = False,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Suggest chapters (AI when configured, keywords otherwise) for questions that
+    have no chapter yet. Admin-confirmed tags are never overwritten; earlier
+    AI/keyword suggestions are only replaced when overwrite_suggestions=true.
+    """
+    from services.chapter_tagger import suggest_many, question_text_for_tagging
+    from services.jee_syllabus import infer_subject
+
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    targets = [
+        q for q in quiz.questions
+        if q.chapter_source != "admin" and (not q.chapter or overwrite_suggestions)
+    ]
+    items = [
+        {
+            "key": q.id,
+            "text": question_text_for_tagging(q.text, [{"text": o.text} for o in q.options]),
+            "subject": q.subject or infer_subject(q.section, quiz.subject),
+        }
+        for q in targets
+    ]
+    results = await suggest_many(items)
+    by_id = {q.id: q for q in targets}
+    for r in results:
+        q = by_id.get(r["key"])
+        if not q:
+            continue
+        if r.get("subject") and not q.subject:
+            q.subject = r["subject"]
+        if r.get("chapter"):
+            q.subject = r["subject"] or q.subject
+            q.chapter = r["chapter"]
+            q.chapter_source = r["source"]
+    await db.flush()
+    db.expire_all()
+    return await get_quiz(db, quiz_id)

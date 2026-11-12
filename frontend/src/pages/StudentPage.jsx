@@ -11,6 +11,7 @@ import PasswordInput from '../components/Common/PasswordInput.jsx'
 import { useRoom } from '../hooks/useRoom.js'
 import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
 import { startQuizAttempt } from '../services/quizService.js'
+import MyProgress from '../components/Progress/MyProgress.jsx'
 import { login as apiLogin } from '../services/authService.js'
 
 function formatIST(dateStr) {
@@ -291,12 +292,13 @@ export default function StudentPage({
       secMap[s].timeSpent += (q.timeSpent || 0)
       const qPos = Number(q.positive_marks ?? q.marks ?? 4)
       secMap[s].totalMarks += qPos
-      if (q.isCorrect) {
-        secMap[s].correct += 1
-        secMap[s].score += (q.marks_awarded !== undefined ? q.marks_awarded : qPos)
-      } else if (q.selectedOption !== undefined && q.selectedOption !== null) {
-        const qNeg = Number(q.negative_marks ?? 0)
-        secMap[s].score -= (q.marks_awarded !== undefined ? Math.abs(q.marks_awarded) : qNeg)
+      if (q.isCorrect) secMap[s].correct += 1
+      // Backend marks are authoritative: covers multi-correct partial credit and
+      // numerical negatives (selectedOption is null for those question types).
+      if (q.marks_awarded !== undefined && q.marks_awarded !== null) {
+        secMap[s].score += Number(q.marks_awarded)
+      } else if (q.isCorrect) {
+        secMap[s].score += qPos
       }
     })
 
@@ -488,6 +490,7 @@ export default function StudentPage({
         user={user}
         onTake={handleTake}
         onHistory={() => setScreen('history')}
+        onProgress={() => setScreen('progress')}
         onAnalytics={quiz => { setAnalyticsQuiz(quiz); setScreen('analytics') }}
         onLogout={onLogout}
         attempts={attempts}
@@ -501,6 +504,10 @@ export default function StudentPage({
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
     </>
+  )
+
+  if (screen === 'progress') return (
+    <MyProgress onBack={() => setScreen('home')} />
   )
 
   if (screen === 'notices') return (
@@ -583,6 +590,7 @@ export default function StudentPage({
       leaderboard={leaderboard}
       currentUserId={user?.id}
       currentUserName={user?.name}
+      onOpenProgress={() => setScreen('progress')}
       onBack={() => setScreen('home')}
       onHome={() => setScreen('home')}
     />
@@ -631,6 +639,7 @@ export default function StudentPage({
       leaderboard={leaderboard}
       currentUserId={user?.id}
       currentUserName={user?.name}
+      onOpenProgress={() => setScreen('progress')}
       onBack={() => setScreen('history')}
       onHome={() => setScreen('home')}
     />

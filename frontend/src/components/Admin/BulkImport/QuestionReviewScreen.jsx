@@ -1,4 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
+import ChapterSelect, { useSyllabus } from '../../Progress/ChapterSelect.jsx'
+import { suggestChapters, questionTextForTagging, inferSubjectFromSection } from '../../../services/progressService.js'
 
 function parseToISTIso(val) {
   if (!val) return null
@@ -101,11 +103,49 @@ export default function QuestionReviewScreen({
         ...q,
         question_number: qNum,
         section: assignedSec,
+        subject: q.subject || inferSubjectFromSection(assignedSec) || null,
         approved: q.approved !== undefined ? q.approved : !q.needs_review,
       }
     })
   )
   const isImporting = importing || isSubmitting
+
+  // ── Chapter suggestions (AI when configured, keywords otherwise) ────────────
+  const syllabus = useSyllabus()
+  const [tagStatus, setTagStatus] = useState({ state: 'idle', done: 0, total: 0 })
+  const [bulkSubject, setBulkSubject] = useState('')
+  const autoRan = useRef(false)
+  const runChapterSuggest = async (onlyMissing = true, forceSubject = null) => {
+    const pool = forceSubject ? questions.map(q => ({ ...q, subject: forceSubject, ...(q.chapter_source === 'admin' && q.subject === forceSubject ? {} : { chapter: null, chapter_source: null }) })) : questions
+    const targets = pool.filter(q => (onlyMissing ? !q.chapter : q.chapter_source !== 'admin') && questionTextForTagging(q).length >= 8)
+    if (!targets.length) { setTagStatus({ state: 'done', done: 0, total: 0 }); return }
+    setTagStatus({ state: 'running', done: 0, total: targets.length })
+    try {
+      const res = await suggestChapters(targets.map(q => ({ key: String(q.question_number), text: questionTextForTagging(q), subject: forceSubject || q.subject || inferSubjectFromSection(q.section) })))
+      const byKey = Object.fromEntries(res.map(r => [r.key, r]))
+      setQuestions(prev => prev.map(q => {
+        const r = byKey[String(q.question_number)]
+        if (!r || !r.chapter || (q.chapter_source === 'admin' && (!forceSubject || q.subject === forceSubject))) {
+          return forceSubject && q.subject !== forceSubject ? { ...q, subject: forceSubject, chapter: null, chapter_source: null } : q
+        }
+        return { ...q, subject: forceSubject || r.subject || q.subject, chapter: r.chapter, chapter_source: r.source }
+      }))
+      setTagStatus({ state: 'done', done: res.filter(r => r.chapter).length, total: targets.length })
+    } catch {
+      setTagStatus({ state: 'error', done: 0, total: targets.length })
+    }
+  }
+  useEffect(() => {
+    if (autoRan.current || !rawQuestions.length) return
+    autoRan.current = true
+    runChapterSuggest(true)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  const applySubjectToAll = subj => {
+    setBulkSubject(subj)
+    if (!subj) return
+    runChapterSuggest(true, subj)
+  }
+  const untaggedCount = questions.filter(q => !q.chapter).length
   const fileName = metadata?.filename || analysisData?.filename || 'Uploaded PDF'
 
   const [filter, setFilter] = useState('all') // 'all' | 'ready' | 'needs_review'
@@ -518,6 +558,26 @@ export default function QuestionReviewScreen({
             )
           })}
         </div>
+      </div>
+
+      {/* ── Chapter tagging strip ── */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', background: '#f5f3ff', border: '1px solid #ddd6fe', borderRadius: 14, padding: '10px 14px', marginBottom: 16 }}>
+        <span style={{ fontSize: 18 }} aria-hidden>🏷</span>
+        <div style={{ flex: 1, minWidth: 220, fontSize: 13, color: '#4c1d95' }}>
+          <b>Chapters for weak-chapter analysis.</b>{' '}
+          {tagStatus.state === 'running' && `Suggesting chapters for ${tagStatus.total} questions…`}
+          {tagStatus.state === 'done' && (untaggedCount ? `${untaggedCount} question${untaggedCount !== 1 ? 's' : ''} still need a chapter (image-only ones must be picked by hand).` : 'Every question has a chapter. Check the suggestions on each card.')}
+          {tagStatus.state === 'error' && 'Suggestion failed. Pick chapters on each card.'}
+          {tagStatus.state === 'idle' && 'Pick a chapter on each card.'}
+          {syllabus && !syllabus.ai_enabled && <span style={{ color: '#92400e' }}> (No AI key on server: keyword guesses only.)</span>}
+        </div>
+        <select className="inp-sm" value={bulkSubject} onChange={e => applySubjectToAll(e.target.value)} aria-label="Set subject for all questions" style={{ fontSize: 12 }}>
+          <option value="">Set subject for all…</option>
+          {(syllabus?.subjects || []).map(x => <option key={x.subject} value={x.subject}>{x.subject}</option>)}
+        </select>
+        <button type="button" className="btn-sec" style={{ fontSize: 12, padding: '6px 12px' }} disabled={tagStatus.state === 'running'} onClick={() => runChapterSuggest(true)}>
+          {tagStatus.state === 'running' ? 'Suggesting…' : '✨ Suggest missing'}
+        </button>
       </div>
 
       {/* ── Test Configuration: Title, Timing, Instructions, Availability Window & Solution PDF ── */}
@@ -1172,6 +1232,19 @@ export default function QuestionReviewScreen({
                         ))}
                       </select>
                     </div>
+                  </div>
+
+                  {/* Subject & Chapter */}
+                  <div style={{ marginTop: 10 }}>
+                    <span style={{ fontSize: 11, fontWeight: 800, color: '#4338ca', display: 'block', marginBottom: 4 }}>
+                      Subject & Chapter
+                    </span>
+                    <ChapterSelect
+                      compact
+                      syllabus={syllabus}
+                      value={{ subject: q.subject, chapter: q.chapter, chapter_source: q.chapter_source }}
+                      onChange={next => setQuestions(prev => prev.map(item => item.question_number === q.question_number ? { ...item, ...next } : item))}
+                    />
                   </div>
                 </div>
               </div>
