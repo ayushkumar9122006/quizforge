@@ -8,6 +8,7 @@ import { useEffect, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, ReferenceDot } from 'recharts'
 import { getAttemptReport, getMyProgress, SUBJECT_COLORS } from '../../services/progressService.js'
 import { Panel, PctBar, SubjectDot, StatCard, TrendBadge, Loading, ErrorBox, shortTitle, fmtDate } from './ui.jsx'
+import { TimeStrategyPanel, DifficultyPanel, TargetPanel } from './StrategyPanels.jsx'
 
 export default function AttemptReport({ attemptId, showHistory = true, onOpenProgress }) {
   const [report, setReport] = useState(null)
@@ -158,6 +159,10 @@ export default function AttemptReport({ attemptId, showHistory = true, onOpenPro
         )}
         {r.untagged_questions > 0 && <p style={{ fontSize: 12, color: '#94a3b8', margin: '10px 0 0' }}>{r.untagged_questions} question{r.untagged_questions !== 1 ? 's' : ''} in this test {r.untagged_questions !== 1 ? 'have' : 'has'} no chapter tag yet.</p>}
       </Panel>
+
+      <TargetPanel target={r.target} compact editable={showHistory} onSaved={load} />
+      <DifficultyPanel d={r.difficulty} />
+      <TimeStrategyPanel ts={r.time_strategy} />
 
       {/* History context */}
       {showHistory && progress && progress.tests_taken > 0 && (

@@ -24,6 +24,7 @@ export default function StudentHome({
   onTake,
   onHistory,
   onProgress,
+  onNotebook,
   onAnalytics,
   onLogout,
   attempts = [],
@@ -111,6 +112,11 @@ export default function StudentHome({
           {onProgress && (
             <button className="btn-pri" onClick={onProgress} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               📈 My Progress
+            </button>
+          )}
+          {onNotebook && (
+            <button className="btn-sec" onClick={onNotebook} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📒 Mistake Notebook
             </button>
           )}
           <button className="btn-sec" onClick={onOpenNotices} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>

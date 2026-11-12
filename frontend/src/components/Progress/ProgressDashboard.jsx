@@ -16,6 +16,7 @@ import { SUBJECT_COLORS } from '../../services/progressService.js'
 import {
   TrendBadge, StatCard, Panel, PctBar, SubjectDot, fmtDate, shortTitle, QTYPE_LABELS,
 } from './ui.jsx'
+import { TargetPanel, TimeStrategySummary, DifficultySummary } from './StrategyPanels.jsx'
 
 const DIAG_LABEL = {
   avoiding: { text: 'Avoiding', color: '#92400e', bg: '#fef3c7' },
@@ -182,7 +183,7 @@ function ChapterTable({ chapters }) {
   )
 }
 
-export default function ProgressDashboard({ data, title = 'My Progress', onBack, adminView = false }) {
+export default function ProgressDashboard({ data, title = 'My Progress', onBack, adminView = false, onReload, onPractice, onNotebook }) {
   const timeline = data?.timeline || []
   const chartData = useMemo(() => timeline.map((t, i) => ({
     name: shortTitle(t.quiz_title) || `Test ${i + 1}`,
@@ -245,6 +246,25 @@ export default function ProgressDashboard({ data, title = 'My Progress', onBack,
               ))}
             </div>
           )}
+
+          {!adminView && (onPractice || onNotebook) && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 12, marginBottom: 18 }}>
+              {onPractice && (
+                <button onClick={onPractice} style={{ textAlign: 'left', cursor: 'pointer', padding: '14px 16px', borderRadius: 16, background: 'linear-gradient(135deg,#fff7ed,#fffbeb)', border: '1px solid #fed7aa' }}>
+                  <div style={{ fontWeight: 900, color: '#7c2d12', fontSize: 15 }}>🎯 Practice my weak chapters</div>
+                  <div style={{ fontSize: 12.5, color: '#9a3412', marginTop: 3 }}>15–20 questions from {data.weak_chapters?.slice(0, 3).map(c => c.chapter).join(', ') || 'your weakest chapters'}</div>
+                </button>
+              )}
+              {onNotebook && (
+                <button onClick={onNotebook} style={{ textAlign: 'left', cursor: 'pointer', padding: '14px 16px', borderRadius: 16, background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', border: '1px solid #c7d2fe' }}>
+                  <div style={{ fontWeight: 900, color: '#312e81', fontSize: 15 }}>📒 Mistake notebook</div>
+                  <div style={{ fontSize: 12.5, color: '#4f46e5', marginTop: 3 }}>Re-attempt every wrong or skipped question on a 3, 7, 21 day schedule</div>
+                </button>
+              )}
+            </div>
+          )}
+
+          <TargetPanel target={data.target} editable={!adminView} onSaved={onReload} />
 
           <Panel title="Score curve across tests" icon="📈" right={<span style={{ fontSize: 12, color: '#94a3b8' }}>Percentile adjusts for how hard each paper was</span>}>
             {timeline.length < 2 && <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 8px' }}>One test so far. The curve fills in as more tests are taken.</p>}
@@ -332,6 +352,9 @@ export default function ProgressDashboard({ data, title = 'My Progress', onBack,
             </Panel>
           )}
 
+          <DifficultySummary d={data.difficulty} />
+          <TimeStrategySummary ts={data.time_strategy} />
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 18 }}>
             {data.strong_chapters?.length > 0 && (
               <Panel title="Strong chapters" icon="💪" style={{ marginBottom: 0 }}>
@@ -366,7 +389,7 @@ export default function ProgressDashboard({ data, title = 'My Progress', onBack,
                 <thead>
                   <tr style={{ borderBottom: '1.5px solid #f1f5f9', color: '#64748b', fontSize: 11 }}>
                     <th style={{ textAlign: 'left', padding: '8px' }}>TEST</th>
-                    <th>DATE</th><th>SCORE</th><th>RANK</th><th>PERCENTILE</th>
+                    <th>DATE</th><th>SCORE</th><th>RANK</th><th>BATCH %ILE</th><th title="Estimated JEE Main percentile from marks scaled to 300">JEE %ILE*</th>
                     {subjects.map(sub => <th key={sub}>{sub.slice(0, 4).toUpperCase()}</th>)}
                     <th>−VE MARKS</th>
                   </tr>
@@ -379,6 +402,7 @@ export default function ProgressDashboard({ data, title = 'My Progress', onBack,
                       <td style={{ fontWeight: 800 }}>{t.score}/{t.total_marks} <span style={{ color: '#94a3b8', fontWeight: 600 }}>({t.score_pct}%)</span></td>
                       <td>{t.rank}/{t.participants}</td>
                       <td style={{ fontWeight: 700, color: '#059669' }}>{t.percentile}</td>
+                      <td style={{ color: '#4338ca', fontWeight: 700 }}>{t.estimated_jee_percentile != null ? `≈${t.estimated_jee_percentile}` : '—'}</td>
                       {subjects.map(sub => <td key={sub} style={{ color: SUBJECT_COLORS[sub], fontWeight: 700 }}>{t.subjects?.[sub] ? `${t.subjects[sub].score_pct}%` : '—'}</td>)}
                       <td style={{ color: '#b91c1c', fontWeight: 700 }}>{t.negative_marks ? `−${t.negative_marks}` : '0'}</td>
                     </tr>

@@ -77,3 +77,14 @@ export function inferSubjectFromSection(section) {
   if (/\bmath/.test(s)) return 'Mathematics'
   return null
 }
+
+// ── Target tracker ────────────────────────────────────────────────────────────
+export async function getTarget() {
+  const { data } = await api.get('/progress/target')
+  return data
+}
+
+export async function setTarget(targetMarks) {
+  const { data } = await api.put('/progress/target', { target_marks: targetMarks || null })
+  return data
+}

@@ -4,13 +4,13 @@ import ProgressDashboard from './ProgressDashboard.jsx'
 import { Loading, ErrorBox } from './ui.jsx'
 
 /** Loads progress (own, or a given student's for admins) and renders the dashboard. */
-export default function MyProgress({ studentId = null, onBack, title }) {
+export default function MyProgress({ studentId = null, onBack, title, onPractice, onNotebook }) {
   const [data, setData] = useState(null)
   const [error, setError] = useState(null)
 
-  const load = async () => {
+  const load = async (quiet = false) => {
     setError(null)
-    setData(null)
+    if (!quiet) setData(null)
     try {
       setData(studentId ? await getStudentProgress(studentId) : await getMyProgress())
     } catch (e) {
@@ -26,6 +26,9 @@ export default function MyProgress({ studentId = null, onBack, title }) {
       data={data}
       onBack={onBack}
       adminView={Boolean(studentId)}
+      onReload={() => load(true)}
+      onPractice={studentId ? null : onPractice}
+      onNotebook={studentId ? null : onNotebook}
       title={title || (studentId ? `${data.student?.name || 'Student'}: Progress` : 'My Progress')}
     />
   )

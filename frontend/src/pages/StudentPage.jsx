@@ -11,6 +11,8 @@ import { submitAttempt, autosaveAttempt, getLeaderboard, getMyAttempts } from '.
 import { buildAnswerPayload } from '../services/answerPayload.js'
 import { startQuizAttempt, getQuiz, fromApiFormat } from '../services/quizService.js'
 import MyProgress from '../components/Progress/MyProgress.jsx'
+import MistakeNotebook from '../components/Practice/MistakeNotebook.jsx'
+import WeakChapterPractice from '../components/Practice/WeakChapterPractice.jsx'
 import { resumableSeconds, clearAttempt } from '../services/attemptStorage.js'
 import { login as apiLogin } from '../services/authService.js'
 
@@ -467,6 +469,7 @@ export default function StudentPage({
         onTake={handleTake}
         onHistory={() => setScreen('history')}
         onProgress={() => setScreen('progress')}
+        onNotebook={() => setScreen('notebook')}
         onAnalytics={quiz => { setAnalyticsQuiz(quiz); setScreen('analytics') }}
         onLogout={onLogout}
         attempts={attempts}
@@ -483,7 +486,19 @@ export default function StudentPage({
   )
 
   if (screen === 'progress') return (
-    <MyProgress onBack={() => setScreen('home')} />
+    <MyProgress
+      onBack={() => setScreen('home')}
+      onPractice={() => setScreen('practice')}
+      onNotebook={() => setScreen('notebook')}
+    />
+  )
+
+  if (screen === 'notebook') return (
+    <MistakeNotebook onBack={() => setScreen('home')} onPractice={() => setScreen('practice')} />
+  )
+
+  if (screen === 'practice') return (
+    <WeakChapterPractice onBack={() => setScreen('home')} onNotebook={() => setScreen('notebook')} />
   )
 
   if (screen === 'notices') return (
