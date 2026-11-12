@@ -10,45 +10,9 @@ from schemas.session import AttemptSubmit
 from datetime import datetime
 from typing import Optional, List
 import asyncio
-import random
-import string
 import json
 import math
 import re
-
-
-def generate_room_code() -> str:
-    """Generate a unique 6-digit alphanumeric room code."""
-    return "".join(random.choices(string.digits, k=6))
-
-
-async def create_session(db: AsyncSession, quiz_id: str, max_students: int = 100) -> QuizSession:
-    # Ensure unique room code
-    while True:
-        code = generate_room_code()
-        existing = await db.execute(
-            select(QuizSession).where(QuizSession.room_code == code)
-        )
-        if not existing.scalar_one_or_none():
-            break
-
-    session = QuizSession(
-        quiz_id=quiz_id,
-        room_code=code,
-        max_students=max_students,
-    )
-    db.add(session)
-    await db.flush()
-    return session
-
-
-async def get_session_by_code(db: AsyncSession, room_code: str) -> Optional[QuizSession]:
-    result = await db.execute(
-        select(QuizSession)
-        .options(selectinload(QuizSession.quiz))
-        .where(QuizSession.room_code == room_code)
-    )
-    return result.scalar_one_or_none()
 
 
 async def get_session_by_id(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
@@ -58,41 +22,6 @@ async def get_session_by_id(db: AsyncSession, session_id: str) -> Optional[QuizS
         .where(QuizSession.id == session_id)
     )
     return result.scalar_one_or_none()
-
-
-async def start_session(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
-    session = await get_session_by_id(db, session_id)
-    if not session:
-        return None
-    session.status = SessionStatus.active
-    session.started_at = datetime.utcnow()
-    await db.flush()
-    return session
-
-
-async def end_session(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
-    session = await get_session_by_id(db, session_id)
-    if not session:
-        return None
-    session.status = SessionStatus.completed
-    session.ended_at = datetime.utcnow()
-    await db.flush()
-    return session
-
-
-async def get_or_create_attempt(db: AsyncSession, session_id: str, student_id: str) -> Attempt:
-    result = await db.execute(
-        select(Attempt).where(
-            Attempt.session_id == session_id,
-            Attempt.student_id == student_id,
-        )
-    )
-    attempt = result.scalar_one_or_none()
-    if not attempt:
-        attempt = Attempt(session_id=session_id, student_id=student_id)
-        db.add(attempt)
-        await db.flush()
-    return attempt
 
 
 async def get_attempt(db: AsyncSession, session_id: str, student_id: str) -> Optional[Attempt]:

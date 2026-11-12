@@ -4,11 +4,8 @@ import {
   createQuiz, publishQuiz, toApiFormat, uploadSolutionPdf,
   deleteSolutionPdf, viewSolutionPdf, confirmBulkImport, updateQuizAvailability
 } from '../../services/quizService.js'
-import { createSession, endSession } from '../../services/sessionService.js'
 import SectionConfig from './SectionConfig.jsx'
 import QuestionEditor from './QuestionEditor.jsx'
-import LiveSessionMonitor from './LiveSessionMonitor.jsx'
-import { useRoom } from '../../hooks/useRoom.js'
 import AnalyticsDashboard from './Analytics/AnalyticsDashboard.jsx'
 import PdfUploadModal from './BulkImport/PdfUploadModal.jsx'
 import QuestionReviewScreen from './BulkImport/QuestionReviewScreen.jsx'
@@ -66,8 +63,6 @@ export default function AdminDashboard({ onLogout }) {
   const [draftMeta, setDraftMeta] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState(null)
-  const [activeSession, setActiveSession] = useState(null)
-  const [activeQuiz, setActiveQuiz] = useState(null)
   const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
   const [taggingQuizId, setTaggingQuizId] = useState(null)
   const [uploadingPdfQuizId, setUploadingPdfQuizId] = useState(null)
@@ -85,8 +80,6 @@ export default function AdminDashboard({ onLogout }) {
 
   const pdfInputRef = useRef(null)
   const targetPdfQuizId = useRef(null)
-
-  const room = useRoom(activeSession?.room_code)
 
   const handleConfigDone = (questions, title, totalDurationMin, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd) => {
     setDraftQ(questions)
@@ -203,15 +196,6 @@ export default function AdminDashboard({ onLogout }) {
     }
   }
 
-  const handleLeaveRoom = async () => {
-    if (activeSession) {
-      try { await endSession(activeSession.id) } catch {}
-    }
-    setActiveSession(null)
-    setActiveQuiz(null)
-    setScreen('dash')
-  }
-
   const handleAnalytics = (quiz) => {
     setAnalyticsQuiz(quiz)
     setScreen('analytics')
@@ -325,20 +309,6 @@ export default function AdminDashboard({ onLogout }) {
       onCancel={() => { setScreen('dash'); setBulkAnalysisData(null); setBulkTargetQuizId(null) }}
       importing={bulkImporting}
       isSubmitting={bulkImporting}
-    />
-  )
-
-  if (screen === 'room' && activeSession && activeQuiz) return (
-    <LiveSessionMonitor
-      session={activeSession}
-      quiz={activeQuiz}
-      onLeave={handleLeaveRoom}
-      connected={room.connected}
-      participants={room.participants}
-      count={room.count}
-      quizStarted={room.quizStarted}
-      recentSubmit={room.recentSubmit}
-      leaderboard={room.leaderboard}
     />
   )
 

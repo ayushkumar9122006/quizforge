@@ -3,12 +3,10 @@ import StudentHome from '../components/Student/StudentHome.jsx'
 import AttemptHistory from '../components/Student/AttemptHistory.jsx'
 import QuizAttempt from '../components/Quiz/QuizAttempt.jsx'
 import Results from '../components/Quiz/Results.jsx'
-import WaitingRoom from '../components/Quiz/WaitingRoom.jsx'
 import AnalyticsDashboard from '../components/Admin/Analytics/AnalyticsDashboard.jsx'
 import CelebrationOverlay from '../components/Quiz/CelebrationOverlay.jsx'
 import NoticeBoard from '../components/Notice/NoticeBoard.jsx'
 import PasswordInput from '../components/Common/PasswordInput.jsx'
-import { useRoom } from '../hooks/useRoom.js'
 import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
 import { startQuizAttempt } from '../services/quizService.js'
 import MyProgress from '../components/Progress/MyProgress.jsx'
@@ -43,7 +41,6 @@ export default function StudentPage({
 }) {
   const [session, setSession] = useState(null)
   const [leaderboard, setLeaderboard] = useState([])
-  const [inWaiting, setInWaiting] = useState(false)
   const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
 
   // Pre-test instructions modal state
@@ -165,8 +162,6 @@ export default function StudentPage({
     }
   }, [screen, viewingAttempt?.session_id, viewingAttempt?.sessionId])
 
-  const room = useRoom(session?.room_code)
-
   // Student clicks Start on a quiz card → show pre-test instruction screen FIRST
   const handleTake = (quiz) => {
     setStartError(null)
@@ -189,7 +184,6 @@ export default function StudentPage({
       const resp = await startQuizAttempt(target.id)
       setSession({
         id: resp.session_id,
-        room_code: '',
       })
 
       // Update quiz effective duration if clamped by closing deadline
@@ -200,7 +194,6 @@ export default function StudentPage({
         timePerQ: Math.max(1, Math.round(resp.duration_sec / (target.questions?.length || 1))),
       }
 
-      setInWaiting(false)
       onTake(configuredQuiz)
       setInstructionTarget(null)
       setScreen('quiz')
@@ -477,21 +470,6 @@ export default function StudentPage({
         </div>
       </div>
     </div>
-  )
-
-  // Waiting room if needed
-  if (screen === 'quiz' && inWaiting && session && activeQuiz) return (
-    <WaitingRoom
-      session={session}
-      quiz={activeQuiz}
-      userRole="student"
-      onQuizStart={() => setInWaiting(false)}
-      onLeave={() => { setInWaiting(false); setSession(null); setScreen('home') }}
-      connected={room.connected}
-      participants={room.participants}
-      quizStarted={room.quizStarted}
-      recentSubmit={room.recentSubmit}
-    />
   )
 
   if (screen === 'home') return (

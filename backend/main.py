@@ -2,7 +2,6 @@
 QuizForge — FastAPI Application Entry Point
 Block 1: Database, Models, CRUD
 Block 2: JWT Auth, Quiz/Session APIs, LLM
-Block 3: WebSockets — real-time leaderboard, room events
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,7 +11,6 @@ import os
 
 from database.config import init_db, settings
 from routers import auth, quiz, session, llm, notice, progress
-from routers import ws as ws_router
 
 
 @asynccontextmanager
@@ -29,7 +27,7 @@ os.makedirs(f"{settings.upload_dir}/diagrams", exist_ok=True)
 
 app = FastAPI(
     title="QuiZee API",
-    description="AI-powered Quiz Platform with real-time WebSockets",
+    description="AI-powered JEE test platform with progress analytics",
     version="3.0.0",
     lifespan=lifespan,
 )
@@ -67,9 +65,6 @@ app.include_router(session.router)
 app.include_router(llm.router)
 app.include_router(notice.router)
 app.include_router(progress.router)
-
-# ── WebSocket router ──────────────────────────────────────────────────────────
-app.include_router(ws_router.router)
 
 
 @app.get("/health")

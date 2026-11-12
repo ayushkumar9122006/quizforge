@@ -4,11 +4,6 @@ from typing import Optional, List
 from models.all_models import SessionStatus, AttemptStatus
 
 
-class SessionCreate(BaseModel):
-    quiz_id: str
-    max_students: int = 100
-
-
 class SessionOut(BaseModel):
     id: str
     quiz_id: str
@@ -20,10 +15,6 @@ class SessionOut(BaseModel):
     max_students: int
 
     model_config = {"from_attributes": True}
-
-
-class JoinSessionRequest(BaseModel):
-    room_code: str
 
 
 class AnswerSubmit(BaseModel):
