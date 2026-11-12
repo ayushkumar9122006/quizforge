@@ -206,11 +206,11 @@ export default function StudentHome({
       {/* Quiz List */}
       <div style={{ display: 'grid', gap: 14 }}>
         {quizzes.map(quiz => {
-          const totalQ = quiz.questions?.length || 0
+          const totalQ = quiz.question_count ?? quiz.questions?.length ?? 0
           const mins = quiz.total_duration_minutes != null
             ? Number(quiz.total_duration_minutes).toFixed(2)
             : String(Math.round(totalQ * ((quiz.time_per_q_sec || quiz.timePerQ || 300) / 60)))
-          const secs = [...new Set((quiz.questions || []).map(q => q.section || 'General'))]
+          const secs = quiz.sections?.length ? quiz.sections.map(x => x.name) : [...new Set((quiz.questions || []).map(q => q.section || 'General'))]
           const availability = getQuizAvailability(quiz)
 
           return (

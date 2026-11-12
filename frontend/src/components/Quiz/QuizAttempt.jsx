@@ -4,10 +4,11 @@ import Palette       from './Palette.jsx'
 import Lightbox      from '../Common/Lightbox.jsx'
 import { formatTime } from '../../services/utils.js'
 import { attemptKey, readAttempt, writeAttempt, clearAttempt } from '../../services/attemptStorage.js'
+import { restoreSavedAnswers } from '../../services/answerPayload.js'
 
 const LABELS = ['A','B','C','D','E','F']
 
-export default function QuizAttempt({ quiz, userName, userId = null, onSubmit }) {
+export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, onAutosave = null }) {
   const questions = quiz.questions || []
   const perQ      = Math.max(1, Math.round(Number(quiz.timePerQ) || 300))
   const totalTime = Math.max(1, Math.round(quiz.effectiveDurationSec || (questions.length * perQ)))
@@ -41,11 +42,15 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit })
     return diffSec > 0 ? diffSec : totalTime
   }
 
+  // Answers saved on the server (autosave) — used when this device has nothing, e.g. resuming on a new device
+  const serverCopy = useRef(null)
+  if (serverCopy.current === null) serverCopy.current = restoreSavedAnswers(questions, quiz.savedAnswers || [])
   const [answers,  setAnswers]  = useState(() => {
     try {
       const raw = localStorage.getItem(storageAnswersKey) || sessionStorage.getItem(storageAnswersKey)
-      return raw ? JSON.parse(raw) : {}
-    } catch { return {} }
+      const local = raw ? JSON.parse(raw) : {}
+      return Object.keys(local).length ? local : serverCopy.current.answers
+    } catch { return serverCopy.current.answers }
   })
   const [cur,      setCur]      = useState(() => {
     const c = Number(readAttempt(userId, quiz.id, 'cur', 0))
@@ -54,7 +59,10 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit })
   const [qTime,    setQTime]    = useState(perQ)
   const [totLeft,  setTotLeft]  = useState(getInitialTotLeft)
   const [confirm,  setConfirm]  = useState(false)
-  const [marked,   setMarked]   = useState(() => new Set(readAttempt(userId, quiz.id, 'marked', []) || []))
+  const [marked,   setMarked]   = useState(() => {
+    const local = readAttempt(userId, quiz.id, 'marked', null)
+    return local ? new Set(local) : new Set(serverCopy.current.marked)
+  })
   const [palette,  setPalette]  = useState(false)
   const [lightbox, setLightbox] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -70,7 +78,7 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit })
   })
   const [tabWarningModal, setTabWarningModal] = useState(null)
 
-  const [qTimes,   setQTimes]   = useState(() => readAttempt(userId, quiz.id, 'qtimes', {}) || {})
+  const [qTimes,   setQTimes]   = useState(() => readAttempt(userId, quiz.id, 'qtimes', null) || serverCopy.current.qTimes || {})
   const [totalSpent, setTotalSpent] = useState(() => Number(readAttempt(userId, quiz.id, 'spent', 0)) || 0)
   const [lastVisitedPerSec, setLastVisitedPerSec] = useState({})
 
@@ -124,6 +132,50 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit })
     window.addEventListener('beforeunload', onBeforeUnload)
     return () => window.removeEventListener('beforeunload', onBeforeUnload)
   }, [])
+
+  // ── Server autosave: every 30 s when something changed, when the tab is hidden,
+  //    and as soon as the connection comes back. Failures keep the device copy.
+  const [saveState, setSaveState] = useState({ status: 'idle', at: null }) // idle | saving | saved | offline
+  const dirtyRef = useRef(false)
+  const savingRef = useRef(false)
+  const firstRenderRef = useRef(true)
+  useEffect(() => {
+    if (firstRenderRef.current) { firstRenderRef.current = false; return }
+    dirtyRef.current = true
+  }, [answers, marked])
+  const saveNow = useCallback(async (force = false) => {
+    if (!onAutosave || submittedRef.current || isSubmittingRef.current || savingRef.current) return
+    if (!force && !dirtyRef.current) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { setSaveState(s => ({ ...s, status: 'offline' })); return }
+    savingRef.current = true
+    dirtyRef.current = false
+    setSaveState(s => ({ ...s, status: 'saving' }))
+    try {
+      await onAutosave(answersRef.current, markedRef.current, qTimesRef.current, totalSpentRef.current)
+      setSaveState({ status: 'saved', at: new Date() })
+    } catch (e) {
+      dirtyRef.current = true
+      const st = e?.response?.status
+      setSaveState(s => ({ ...s, status: st === 409 ? 'closed' : 'offline' }))
+    } finally {
+      savingRef.current = false
+    }
+  }, [onAutosave])
+  useEffect(() => {
+    const t = setInterval(() => saveNow(false), 30000)
+    const onHidden = () => { if (document.visibilityState === 'hidden') saveNow(false) }
+    const onOnline = () => saveNow(true)
+    const onOffline = () => setSaveState(s => ({ ...s, status: 'offline' }))
+    document.addEventListener('visibilitychange', onHidden)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onHidden)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [saveNow])
 
   // Track last visited question index per section
   useEffect(() => {
@@ -452,6 +504,19 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit })
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:'#9ca3af', marginBottom:3 }}>
             <span>{done}/{questions.length} answered</span>
+            {onAutosave && (
+              <span
+                aria-live="polite"
+                title="Answers are saved on this device instantly and to the server every 30 seconds"
+                style={{ fontWeight: 700, color: saveState.status === 'offline' ? '#b45309' : saveState.status === 'closed' ? '#b91c1c' : '#059669' }}
+              >
+                {saveState.status === 'saving' && 'Saving…'}
+                {saveState.status === 'saved' && `✓ Saved ${saveState.at ? saveState.at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`}
+                {saveState.status === 'offline' && '⚠ Offline: answers saved on this device'}
+                {saveState.status === 'closed' && 'Time is over: submitting…'}
+                {saveState.status === 'idle' && '✓ Saved on this device'}
+              </span>
+            )}
           </div>
           <div style={{ height:4, background:'#f3f4f6', borderRadius:2 }}>
             <div className="pbar-fill" style={{ height:'100%', width:`${totPct}%`, background:totLeft<60?'#ef4444':'linear-gradient(90deg,#6366f1,#8b5cf6)', borderRadius:2 }} />

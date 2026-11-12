@@ -13,11 +13,12 @@ from sqlalchemy.orm import selectinload
 import re
 from database.config import get_db
 from schemas.session import (
+    AutosaveOut,
     AttemptSubmit, AttemptResultOut, AnswerResultOut, LeaderboardEntryOut,
     StudentAttemptHistoryItemOut
 )
 from crud.session import (
-    get_session_by_id, get_attempt,
+    get_session_by_id, get_attempt, autosave_attempt,
     submit_attempt, get_leaderboard, get_student_attempts
 )
 from crud.quiz import get_quiz
@@ -30,6 +31,44 @@ from datetime import datetime, timezone, timedelta
 from typing import List
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
+
+
+@router.put("/{session_id}/autosave", response_model=AutosaveOut)
+async def autosave(
+    session_id: str,
+    data: AttemptSubmit,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+):
+    """
+    Save in-progress answers without scoring (called every ~30 s by the test page).
+    If the browser dies, the student can resume on any device, and an abandoned
+    attempt is auto-submitted with these answers after the deadline.
+    """
+    attempt = await get_attempt(db, session_id, user.id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="No attempt for this test")
+    if attempt.status != AttemptStatus.in_progress:
+        raise HTTPException(status_code=409, detail="This test has already been submitted.")
+    session = await get_session_by_id(db, session_id)
+    quiz = await get_quiz(db, session.quiz_id) if session else None
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    deadline = _attempt_deadline(attempt, quiz)
+    if datetime.now(timezone.utc) > deadline + timedelta(minutes=2):
+        raise HTTPException(status_code=409, detail="Time is over for this test.")
+    saved = await autosave_attempt(db, attempt, data, {q.id for q in quiz.questions})
+    return AutosaveOut(saved=saved, saved_at=datetime.now(timezone.utc))
+
+
+def _attempt_deadline(attempt, quiz):
+    base = int(round(quiz.effective_total_duration_minutes * 60))
+    started = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+    deadline = started + timedelta(seconds=base)
+    if quiz.availability_end:
+        end = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
+        deadline = min(deadline, end)
+    return deadline
 
 
 @router.post("/{session_id}/submit", response_model=AttemptResultOut)

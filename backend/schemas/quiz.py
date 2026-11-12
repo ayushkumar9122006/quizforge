@@ -136,7 +136,7 @@ class QuizOut(BaseModel):
     title: str
     description: Optional[str] = None
     instructions: Optional[str] = None
-    solution_pdf: Optional[str] = None
+    has_solution_pdf: bool = False   # the PDF itself is only served by GET /quizzes/{id}/solution-pdf
     solution_pdf_name: Optional[str] = None
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
@@ -203,7 +203,7 @@ class QuizStudentOut(BaseModel):
     title: str
     description: Optional[str] = None
     instructions: Optional[str] = None
-    solution_pdf: Optional[str] = None
+    has_solution_pdf: bool = False   # the PDF itself is only served by GET /quizzes/{id}/solution-pdf
     solution_pdf_name: Optional[str] = None
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
@@ -271,6 +271,42 @@ class QuizListOut(BaseModel):
         else:
             self.time_per_question_min = round(self.total_duration_minutes / total_q, 2)
         return self
+
+
+class QuizSectionSummary(BaseModel):
+    name: str
+    subject: Optional[str] = None
+    count: int = 0
+
+
+class QuizSummaryOut(BaseModel):
+    """Lightweight quiz card for lists — no questions, images or PDFs."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    status: QuizStatus
+    time_per_q_sec: int
+    total_duration_minutes: Optional[float] = None
+    time_per_question_min: Optional[float] = None
+    total_marks: float
+    is_public: bool = False
+    tags: Optional[List[str]] = None
+    subject: Optional[str] = None
+    difficulty: Optional[str] = None
+    availability_start: Optional[datetime] = None
+    availability_end: Optional[datetime] = None
+    creator_id: str
+    created_at: datetime
+    updated_at: datetime
+    question_count: int = 0
+    untagged_count: int = 0
+    sections: List[QuizSectionSummary] = []
+    subjects: List[str] = []
+    positive_marks: Optional[float] = None
+    negative_marks: Optional[float] = None
+    has_solution_pdf: bool = False
+    solution_pdf_name: Optional[str] = None
 
 
 # ── Bulk Import Schemas ────────────────────────────────────────────────────────

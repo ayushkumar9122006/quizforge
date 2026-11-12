@@ -11,6 +11,11 @@ export async function submitAttempt(sessionId, answers, timeTakenSec, auto = fal
   return data
 }
 
+export async function autosaveAttempt(sessionId, answers, timeTakenSec) {
+  const { data } = await api.put(`/sessions/${sessionId}/autosave`, { answers, time_taken_sec: Math.round(timeTakenSec || 0) }, { timeout: 15000 })
+  return data
+}
+
 export async function getLeaderboard(sessionId) {
   const { data } = await api.get(`/sessions/${sessionId}/leaderboard`)
   return data

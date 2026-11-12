@@ -7,8 +7,9 @@ import AnalyticsDashboard from '../components/Admin/Analytics/AnalyticsDashboard
 import CelebrationOverlay from '../components/Quiz/CelebrationOverlay.jsx'
 import NoticeBoard from '../components/Notice/NoticeBoard.jsx'
 import PasswordInput from '../components/Common/PasswordInput.jsx'
-import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
-import { startQuizAttempt } from '../services/quizService.js'
+import { submitAttempt, autosaveAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
+import { buildAnswerPayload } from '../services/answerPayload.js'
+import { startQuizAttempt, getQuiz, fromApiFormat } from '../services/quizService.js'
 import MyProgress from '../components/Progress/MyProgress.jsx'
 import { resumableSeconds, clearAttempt } from '../services/attemptStorage.js'
 import { login as apiLogin } from '../services/authService.js'
@@ -121,7 +122,6 @@ export default function StudentPage({
           time_taken_sec: item.time_taken_sec,
           totalTimeSpent: item.time_taken_sec,
           auto: item.auto,
-          solution_pdf: item.solution_pdf,
           solution_pdf_name: item.solution_pdf_name,
           has_solution_pdf: item.has_solution_pdf,
           questions: item.questions || [],
@@ -185,13 +185,17 @@ export default function StudentPage({
       setSession({
         id: resp.session_id,
       })
+      // Lists only carry lightweight cards; load the full (student-safe) test now
+      const full = fromApiFormat(await getQuiz(target.id))
 
       // Update quiz effective duration if clamped by closing deadline
       const configuredQuiz = {
         ...target,
+        ...full,
+        savedAnswers: resp.saved_answers || [],
         effectiveDurationSec: resp.duration_sec,
         effectiveDeadline: resp.effective_deadline,
-        timePerQ: Math.max(1, Math.round(resp.duration_sec / (target.questions?.length || 1))),
+        timePerQ: Math.max(1, Math.round(resp.duration_sec / (full.questions?.length || 1))),
       }
 
       onTake(configuredQuiz)
@@ -208,35 +212,19 @@ export default function StudentPage({
     }
   }
 
+  // Autosave from QuizAttempt (every ~30 s and when the tab is hidden)
+  const handleAutosave = useCallback(async (answers, marked, questionTimes, totalTimeSpent) => {
+    if (!activeQuiz || !session) return null
+    const payload = buildAnswerPayload(activeQuiz.questions || [], answers, marked, questionTimes)
+    return autosaveAttempt(session.id, payload, totalTimeSpent)
+  }, [activeQuiz, session])
+
   // Submit attempt from QuizAttempt component
   const handleSubmit = async (answers, auto, marked = new Set(), questionTimes = {}, totalTimeSpent = 0) => {
     if (!activeQuiz || !session) return
     const questions = activeQuiz.questions || []
 
-    const payload = questions.map((q, i) => {
-      const userAns = answers[i]
-      let selectedOption = null
-      let responseText = null
-
-      if (q.question_type === 'numerical') {
-        selectedOption = null
-        responseText = userAns !== undefined && userAns !== null ? String(userAns).trim() : null
-      } else if (q.question_type === 'multi_correct') {
-        selectedOption = null
-        responseText = Array.isArray(userAns) ? JSON.stringify(userAns) : (userAns !== undefined && userAns !== null ? String(userAns) : null)
-      } else {
-        selectedOption = typeof userAns === 'number' ? userAns : null
-        responseText = null
-      }
-
-      return {
-        question_id: q.id,
-        selected_option: selectedOption,
-        response_text: responseText,
-        marked_for_review: marked.has(i),
-        time_taken_sec: questionTimes[i] || 0,
-      }
-    })
+    const payload = buildAnswerPayload(questions, answers, marked, questionTimes)
 
     let attemptResult
     try {
@@ -337,7 +325,7 @@ export default function StudentPage({
       sectionBreakdown,
       totalTimeSpent,
       questionTimes,
-      solution_pdf: activeQuiz.solution_pdf,
+      has_solution_pdf: activeQuiz.has_solution_pdf,
       solution_pdf_name: activeQuiz.solution_pdf_name,
     }
 
@@ -384,26 +372,26 @@ export default function StudentPage({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10, marginBottom: 18 }}>
           <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>QUESTIONS</div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>{instructionTarget.questions?.length || 0} Qs</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>{instructionTarget.question_count ?? instructionTarget.questions?.length ?? 0} Qs</div>
           </div>
           <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>DURATION</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>
               {instructionTarget.total_duration_minutes != null
                 ? `${Number(instructionTarget.total_duration_minutes).toFixed(2)} min`
-                : `~${Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min`}
+                : `~${Math.round((instructionTarget.question_count ?? instructionTarget.questions?.length ?? 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min`}
             </div>
           </div>
           <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: 12, border: '1px solid #a7f3d0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#065f46', fontWeight: 800 }}>CORRECT</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#059669', marginTop: 2 }}>
-              +{instructionTarget.questions?.[0]?.positive_marks ?? 4} marks
+              +{instructionTarget.positive_marks ?? instructionTarget.questions?.[0]?.positive_marks ?? 4} marks
             </div>
           </div>
           <div style={{ background: '#fef2f2', padding: '10px', borderRadius: 12, border: '1px solid #fecaca', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 800 }}>NEGATIVE</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#dc2626', marginTop: 2 }}>
-              -{instructionTarget.questions?.[0]?.negative_marks ?? 1} marks
+              -{instructionTarget.negative_marks ?? instructionTarget.questions?.[0]?.negative_marks ?? 1} marks
             </div>
           </div>
         </div>
@@ -514,7 +502,7 @@ export default function StudentPage({
 
   if (screen === 'quiz' && activeQuiz) return (
     <>
-      <QuizAttempt quiz={activeQuiz} userName={user?.name} userId={user?.id} onSubmit={handleSubmit} />
+      <QuizAttempt quiz={activeQuiz} userName={user?.name} userId={user?.id} onSubmit={handleSubmit} onAutosave={handleAutosave} />
       {celebrationResult && (
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
@@ -571,7 +559,7 @@ export default function StudentPage({
       quiz={{
         ...activeQuiz,
         questions: currentResult.questions || activeQuiz.questions,
-        solution_pdf: currentResult.solution_pdf || activeQuiz.solution_pdf,
+        has_solution_pdf: currentResult.has_solution_pdf || activeQuiz.has_solution_pdf,
         solution_pdf_name: currentResult.solution_pdf_name || activeQuiz.solution_pdf_name
       }}
       result={currentResult}
@@ -598,7 +586,7 @@ export default function StudentPage({
         id: viewingAttempt.quizId || viewingAttempt.quiz_id,
         title: viewingAttempt.quizTitle || viewingAttempt.quiz_title,
         questions: viewingAttempt.questions || [],
-        solution_pdf: viewingAttempt.solution_pdf,
+        has_solution_pdf: viewingAttempt.has_solution_pdf,
         solution_pdf_name: viewingAttempt.solution_pdf_name,
       }}
       result={{
@@ -620,7 +608,7 @@ export default function StudentPage({
         sectionBreakdown: viewingAttempt.sectionBreakdown,
         totalTimeSpent: viewingAttempt.totalTimeSpent || viewingAttempt.time_taken_sec || 0,
         questionTimes: viewingAttempt.questionTimes || {},
-        solution_pdf: viewingAttempt.solution_pdf,
+        has_solution_pdf: viewingAttempt.has_solution_pdf,
         solution_pdf_name: viewingAttempt.solution_pdf_name,
         questions: viewingAttempt.questions || [],
       }}

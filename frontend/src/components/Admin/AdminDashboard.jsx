@@ -508,10 +508,10 @@ export default function AdminDashboard({ onLogout }) {
       {/* Quizzes List */}
       <div style={{ display: 'grid', gap: 14 }}>
         {quizzes.map(quiz => {
-          const hasPdf = Boolean(quiz.solution_pdf || quiz.solution_pdf_name)
+          const hasPdf = Boolean(quiz.has_solution_pdf || quiz.solution_pdf_name)
           const isBusy = uploadingPdfQuizId === quiz.id
           const hasWindow = Boolean(quiz.availability_start || quiz.availability_end)
-          const untaggedCount = (quiz.questions || []).filter(q => !q.chapter).length
+          const untaggedCount = quiz.untagged_count ?? (quiz.questions || []).filter(q => !q.chapter).length
 
           return (
             <div key={quiz.id} className="quiz-row" style={{ flexWrap: 'wrap', gap: 12, padding: '1.2rem 1.4rem' }}>
@@ -522,8 +522,8 @@ export default function AdminDashboard({ onLogout }) {
                   {quiz.title}
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
-                  <span>📝 {quiz.questions?.length ?? 0} Qs</span>
-                  <span>⏱ {quiz.total_duration_minutes != null ? `${Number(quiz.total_duration_minutes).toFixed(2)} min (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.questions?.length || 1))).toFixed(2)} min/q)` : `${Math.round((quiz.time_per_q_sec || 300) / 60)} min/q`}</span>
+                  <span>📝 {quiz.question_count ?? quiz.questions?.length ?? 0} Qs</span>
+                  <span>⏱ {quiz.total_duration_minutes != null ? `${Number(quiz.total_duration_minutes).toFixed(2)} min (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.question_count || quiz.questions?.length || 1))).toFixed(2)} min/q)` : `${Math.round((quiz.time_per_q_sec || 300) / 60)} min/q`}</span>
                   <span>📅 Created {new Date(quiz.created_at).toLocaleDateString()}</span>
                   {hasPdf && (
                     <span style={{ color: '#059669', fontWeight: 800, background: '#ecfdf5', padding: '1px 8px', borderRadius: 6, border: '1px solid #a7f3d0' }}>

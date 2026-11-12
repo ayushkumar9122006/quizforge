@@ -184,6 +184,19 @@ export function sortQuestionsBySection(questionsList) {
   return sorted
 }
 
+// Lightweight quiz card from GET /quizzes/published or /quizzes/my (no questions)
+export function fromApiSummary(s) {
+  return {
+    ...s,
+    published:        s.status === 'published',
+    timePerQ:         s.time_per_q_sec,
+    createdAt:        s.created_at,
+    questions:        [],
+    question_count:   s.question_count || 0,
+    has_solution_pdf: Boolean(s.has_solution_pdf),
+  }
+}
+
 // Convert backend API format → frontend format
 export function fromApiFormat(apiQuiz) {
   return {
@@ -191,9 +204,10 @@ export function fromApiFormat(apiQuiz) {
     title:             apiQuiz.title,
     description:       apiQuiz.description,
     instructions:      apiQuiz.instructions,
-    solution_pdf:      apiQuiz.solution_pdf,
     solution_pdf_name: apiQuiz.solution_pdf_name,
-    has_solution_pdf:  Boolean(apiQuiz.solution_pdf),
+    has_solution_pdf:  Boolean(apiQuiz.has_solution_pdf ?? apiQuiz.solution_pdf),
+    total_duration_minutes: apiQuiz.total_duration_minutes,
+    time_per_q_sec:    apiQuiz.time_per_q_sec,
     availability_start: apiQuiz.availability_start,
     availability_end:   apiQuiz.availability_end,
     published:         apiQuiz.status === 'published',

@@ -268,3 +268,56 @@ async def add_questions_to_quiz(db: AsyncSession, quiz_id: str, new_questions: L
     db.expire_all()
     return await get_quiz(db, quiz_id)
 
+
+
+async def list_quiz_summaries(db: AsyncSession, *, creator_id: Optional[str] = None, published_only: bool = False) -> List[dict]:
+    """
+    Quiz cards for lists in two queries total (was one full quiz load per quiz,
+    including every base64 image and the solution PDF).
+    """
+    from sqlalchemy import func, case
+    q = select(
+        Quiz.id, Quiz.title, Quiz.description, Quiz.instructions, Quiz.status, Quiz.time_per_q_sec,
+        Quiz.total_duration_minutes, Quiz.total_marks, Quiz.is_public, Quiz.tags, Quiz.subject,
+        Quiz.difficulty, Quiz.availability_start, Quiz.availability_end, Quiz.creator_id,
+        Quiz.created_at, Quiz.updated_at, Quiz.solution_pdf_name,
+        (Quiz.solution_pdf.isnot(None)).label("has_solution_pdf"),
+    ).order_by(Quiz.created_at.desc())
+    if creator_id:
+        q = q.where(Quiz.creator_id == creator_id)
+    if published_only:
+        q = q.where(Quiz.status == QuizStatus.published.value)
+    quizzes = [dict(r._mapping) for r in (await db.execute(q)).all()]
+    if not quizzes:
+        return []
+    ids = [x["id"] for x in quizzes]
+    sec_rows = (await db.execute(
+        select(
+            Question.quiz_id, Question.section, Question.subject,
+            func.count(Question.id), func.min(Question.order_index),
+            func.sum(case((Question.chapter.is_(None), 1), else_=0)),
+            func.max(Question.positive_marks), func.max(Question.negative_marks),
+        ).where(Question.quiz_id.in_(ids)).group_by(Question.quiz_id, Question.section, Question.subject)
+    )).all()
+    per_quiz: dict = {}
+    for quiz_id, section, subject, cnt, first_idx, untagged, pos, neg in sec_rows:
+        per_quiz.setdefault(quiz_id, []).append((first_idx, section, subject, cnt, untagged or 0, pos, neg))
+    out = []
+    for x in quizzes:
+        secs = sorted(per_quiz.get(x["id"], []), key=lambda t: t[0])
+        n = sum(t[3] for t in secs)
+        tot = x["total_duration_minutes"]
+        if tot is None:
+            tot = round(((x["time_per_q_sec"] or 300) * (n or 1)) / 60.0, 2)
+        out.append({
+            **x,
+            "total_duration_minutes": round(float(tot), 2),
+            "time_per_question_min": round(float(tot) / (n or 1), 2),
+            "question_count": n,
+            "untagged_count": sum(t[4] for t in secs),
+            "sections": [{"name": t[1], "subject": t[2], "count": t[3]} for t in secs],
+            "subjects": list(dict.fromkeys(t[2] for t in secs if t[2])),
+            "positive_marks": secs[0][5] if secs else None,
+            "negative_marks": secs[0][6] if secs else None,
+        })
+    return out

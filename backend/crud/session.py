@@ -385,7 +385,7 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
             end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
             deadline = min(deadline, end_tz)
 
-        if now >= deadline:
+        if now >= deadline + timedelta(minutes=2):
             saved_answers = att.answers or []
             if not saved_answers:
                 # SAFETY: If no answers were ever saved to the database, do not immediately
@@ -548,7 +548,6 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             "rank": att.rank,
             "total_participants": max(1, participants_count),
             "has_solution_pdf": bool(quiz.solution_pdf),
-            "solution_pdf": quiz.solution_pdf,
             "solution_pdf_name": quiz.solution_pdf_name,
             "questions": resolved_questions,
             "answers": answers_dict,
@@ -594,3 +593,41 @@ async def get_leaderboard(db: AsyncSession, session_id: str) -> List[Leaderboard
         .order_by(LeaderboardEntry.rank.asc())
     )
     return list(result.scalars().all())
+
+
+async def has_finished_quiz(db: AsyncSession, student_id: str, quiz_id: str) -> bool:
+    """True once the student has a submitted / auto-submitted attempt for this quiz."""
+    res = await db.execute(
+        select(Attempt.id)
+        .join(QuizSession, Attempt.session_id == QuizSession.id)
+        .where(
+            QuizSession.quiz_id == quiz_id,
+            Attempt.student_id == student_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+        .limit(1)
+    )
+    return res.first() is not None
+
+
+async def autosave_attempt(db: AsyncSession, attempt: Attempt, submission: AttemptSubmit, valid_question_ids: set) -> int:
+    """Replace the attempt's saved (unscored) answers with the latest snapshot."""
+    await db.execute(delete(Answer).where(Answer.attempt_id == attempt.id))
+    n = 0
+    for a in submission.answers:
+        if a.question_id not in valid_question_ids:
+            continue
+        db.add(Answer(
+            attempt_id=attempt.id,
+            question_id=a.question_id,
+            selected_option=a.selected_option,
+            response_text=a.response_text,
+            marked_for_review=bool(a.marked_for_review),
+            is_correct=False,
+            marks_awarded=0.0,
+            time_taken_sec=a.time_taken_sec or 0,
+        ))
+        n += 1
+    attempt.time_taken_sec = int(submission.time_taken_sec or 0)
+    await db.flush()
+    return n

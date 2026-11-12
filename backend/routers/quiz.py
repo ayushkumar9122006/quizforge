@@ -4,7 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.config import get_db
 from schemas.quiz import (
-    QuizCreate, QuizUpdate, QuizOut, QuizStudentOut,
+    QuizCreate, QuizUpdate, QuizOut, QuizStudentOut, QuizSummaryOut,
     QuizAvailabilityUpdate,
     BulkImportAnalyzeResponse, BulkImportConfirmRequest,
     QuestionChapterBulkUpdate,
@@ -13,7 +13,7 @@ from schemas.session import StartQuizResponse
 from crud.quiz import (
     create_quiz, get_quiz, get_quizzes_by_creator,
     get_published_quizzes, update_quiz, delete_quiz, publish_quiz,
-    add_questions_to_quiz
+    add_questions_to_quiz, list_quiz_summaries
 )
 from services.pdf_importer_service import analyze_pdf
 from utils.dependencies import require_admin, get_current_user
@@ -39,33 +39,22 @@ async def create(
     return await get_quiz(db, quiz.id)
 
 
-@router.get("/my", response_model=List[QuizOut])
+@router.get("/my", response_model=List[QuizSummaryOut])
 async def my_quizzes(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    quizzes = await get_quizzes_by_creator(db, admin.id)
-    result = []
-    for q in quizzes:
-        full = await get_quiz(db, q.id)
-        result.append(full)
-    return result
+    """Admin's quizzes as lightweight cards (no questions / images / PDFs)."""
+    return await list_quiz_summaries(db, creator_id=admin.id)
 
 
-@router.get("/published")
+@router.get("/published", response_model=List[QuizSummaryOut])
 async def published_quizzes(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    quizzes = await get_published_quizzes(db)
-    result = []
-    for q in quizzes:
-        full = await get_quiz(db, q.id)
-        if user.role == UserRole.student:
-            result.append(QuizStudentOut.model_validate(full))
-        else:
-            result.append(QuizOut.model_validate(full))
-    return result
+    """Published quizzes as lightweight cards. Full questions come from GET /quizzes/{id} once a test starts."""
+    return await list_quiz_summaries(db, published_only=True)
 
 
 @router.get("/{quiz_id}")
@@ -246,7 +235,17 @@ async def start_quiz_attempt(
             detail=f"The test window has closed on {end_ist.strftime('%d %B %Y, %I:%M %p IST')}. Test has been submitted.",
         )
 
+    from models.all_models import Answer
+    saved_rows = (await db.execute(select(Answer).where(Answer.attempt_id == attempt.id))).scalars().all()
     return StartQuizResponse(
+        saved_answers=[
+            {
+                "question_id": a.question_id, "selected_option": a.selected_option,
+                "response_text": a.response_text, "marked_for_review": a.marked_for_review,
+                "time_taken_sec": a.time_taken_sec or 0,
+            }
+            for a in saved_rows
+        ],
         session_id=session.id,
         attempt_id=attempt.id,
         quiz_id=quiz.id,

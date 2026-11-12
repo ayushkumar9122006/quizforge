@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { getPublishedQuizzes, fromApiFormat } from '../services/quizService.js'
+import { getPublishedQuizzes, fromApiSummary } from '../services/quizService.js'
 
 export function usePublishedQuizzes() {
   const [quizzes, setQuizzes] = useState([])
@@ -8,7 +8,7 @@ export function usePublishedQuizzes() {
 
   useEffect(() => {
     getPublishedQuizzes()
-      .then(data => setQuizzes(data.map(fromApiFormat)))
+      .then(data => setQuizzes(data.map(fromApiSummary)))
       .catch(e => setError(e?.response?.data?.detail || 'Failed to load quizzes'))
       .finally(() => setLoading(false))
   }, [])

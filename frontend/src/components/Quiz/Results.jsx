@@ -102,7 +102,7 @@ export default function Results({
   // Solution PDF presence
   const quizId = quiz.id || result.quiz_id || result.quizId
   const hasSolutionPdf = Boolean(
-    quiz.solution_pdf || quiz.solution_pdf_name ||
+    quiz.has_solution_pdf || quiz.solution_pdf || quiz.solution_pdf_name ||
     result.solution_pdf || result.solution_pdf_name ||
     result.has_solution_pdf
   )

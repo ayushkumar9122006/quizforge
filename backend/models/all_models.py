@@ -135,6 +135,10 @@ class Quiz(Base):
     updated_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     @property
+    def has_solution_pdf(self) -> bool:
+        return bool(self.solution_pdf)
+
+    @property
     def effective_total_duration_minutes(self) -> float:
         """Returns authoritative total duration in minutes (2 decimals), falling back to time_per_q_sec for legacy quizzes."""
         if self.total_duration_minutes is not None:
