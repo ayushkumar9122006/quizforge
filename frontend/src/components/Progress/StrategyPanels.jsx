@@ -4,10 +4,13 @@
  */
 import { useState } from 'react'
 import { setTarget } from '../../services/progressService.js'
-import { formatDuration } from '../../services/utils.js'
 import { Panel, PctBar, SubjectDot } from './ui.jsx'
 
-const mmss = s => formatDuration(Math.round(s || 0))
+const mmss = sec => {
+  const t = Math.max(0, Math.round(sec || 0))
+  const h = Math.floor(t / 3600), m = Math.floor((t % 3600) / 60), s = t % 60
+  return h ? `${h}h ${m}m` : m ? `${m}m ${String(s).padStart(2, '0')}s` : `${s}s`
+}
 
 function TimeBar({ label, sec, max, color, note }) {
   const w = max > 0 ? Math.min(100, (sec / max) * 100) : 0
@@ -129,7 +132,7 @@ function LevelRows({ levels }) {
         const seg = (n, c) => <div style={{ width: `${(n / b.questions) * 100}%`, background: c }} />
         return (
           <div key={k} style={{ display: 'grid', gridTemplateColumns: '84px 1fr 120px', gap: 10, alignItems: 'center', fontSize: 12.5 }}>
-            <span style={{ fontWeight: 800, color: m.color, background: m.bg, padding: '2px 8px', borderRadius: 20, textAlign: 'center' }}>{m.label} · {b.questions}</span>
+            <span style={{ fontWeight: 800, color: m.color, background: m.bg, padding: '2px 8px', borderRadius: 20, textAlign: 'center', whiteSpace: 'nowrap' }}>{m.label} · {b.questions}</span>
             <div style={{ height: 10, borderRadius: 5, overflow: 'hidden', display: 'flex', background: '#f1f5f9' }} title={`${b.correct} correct, ${b.wrong + b.partial} wrong, ${b.skipped} skipped`}>
               {seg(b.correct, '#22c55e')}{seg(b.wrong + b.partial, '#ef4444')}{seg(b.skipped, '#cbd5e1')}
             </div>

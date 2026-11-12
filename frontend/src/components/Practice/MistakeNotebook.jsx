@@ -29,10 +29,14 @@ export default function MistakeNotebook({ onBack, onPractice }) {
   const start = async (chapter = null, upcoming = false) => {
     setLoadingSession(true); setError(null)
     try {
-      const due = await getDueMistakes({ chapter, includeUpcoming: upcoming, limit: 25 })
+      const due = await getDueMistakes({ chapter, includeUpcoming: upcoming, limit: 20 })
       if (!due.length) { setError(upcoming ? 'Nothing left in this chapter.' : 'Nothing is due right now. Come back on the date shown.'); return }
       setSession({
-        title: chapter ? `Revising: ${chapter}` : `Revising ${due.length} due question${due.length !== 1 ? 's' : ''}`,
+        title: chapter
+          ? `Revising: ${chapter}`
+          : (summary?.due || 0) > due.length
+            ? `Revising ${due.length} of ${summary.due} due (oldest first)`
+            : `Revising ${due.length} due question${due.length !== 1 ? 's' : ''}`,
         items: due.map(d => ({
           key: d.item_id,
           question: d.question,

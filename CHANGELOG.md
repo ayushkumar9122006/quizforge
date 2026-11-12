@@ -1,5 +1,31 @@
 # Changelog
 
+## [Unreleased] — Next level: notebook, practice, autosave, PWA
+
+### Added
+- **Mistake notebook**: wrong / partial / skipped questions captured on every submission (and backfilled from history); spaced re-attempts 3 → 7 → 21 days; mastered after two correct in a row.
+- **Practice my weak chapters**: 15–20 questions from the 3 weakest chapters, untimed with instant feedback, never counted in rank or trend; only from finished or closed tests.
+- **Time strategy**: slow-and-wrong (> 4 min), rushed-and-wrong (< 20 s), time per subject vs topper and batch average (per test and across tests).
+- **Easy / medium / hard** per question from batch accuracy, with marks lost on easy questions.
+- **Target tracker**: goal out of 300, gap overall and per subject, estimated JEE Main percentile (published 2025 marks-vs-percentile analyses, clearly labelled as an estimate).
+- **Autosave** every 30 s, on tab hide and on reconnect, with a Saved / Offline indicator; resume on any device (`saved_answers`, `in_progress`).
+- **PWA**: manifest, icons, service worker (app shell only), Install app button, iOS Add-to-Home-Screen tip.
+- **Fullscreen test mode**: leaving fullscreen is a strike under the 3-strike rule; prompts to re-enter.
+- **Cloudinary** image storage when `CLOUDINARY_URL` is set, plus `migrate_images_to_cloudinary.py`.
+- Migration `0011` (users.target_marks, mistake_items, practice_sets, practice_answers).
+
+### Changed
+- Test lists return lightweight cards (no questions, images or PDFs), in 2 queries instead of one full load per quiz.
+- Scoring moved into `evaluate_answer()` and shared by tests, notebook and practice (all existing scoring tests pass unchanged).
+
+### Removed
+- Room codes, waiting room, live session monitor and the WebSocket room (`/sessions` create/join/start/end/participants, `/ws/{room}`).
+
+### Security
+- Solution PDF is no longer included in any quiz payload (only the gated `/quizzes/{id}/solution-pdf`).
+- `/llm/explain` is blocked for students until they submit that test.
+
+
 ## [Unreleased] — JEE progress analytics
 
 ### Added

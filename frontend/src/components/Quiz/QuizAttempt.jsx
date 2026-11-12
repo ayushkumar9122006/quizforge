@@ -557,7 +557,7 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
         {tabSwitchCount > 0 && (
           <div style={{ display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:8,background:tabSwitchCount>=2?'#fee2e2':'#fef3c7',color:tabSwitchCount>=2?'#991b1b':'#92400e',fontSize:11,fontWeight:800,flexShrink:0,border:`1px solid ${tabSwitchCount>=2?'#fca5a5':'#fde68a'}` }}>
             <span>⚠️</span>
-            <span>Tab switches: {tabSwitchCount}/3</span>
+            <span title="Tab switches and leaving fullscreen">Strikes: {tabSwitchCount}/3</span>
           </div>
         )}
 

@@ -200,3 +200,36 @@ Definitions used everywhere:
   "insights": [{ "kind": "negative_marking", "text": "..." }]
 }
 ```
+
+
+---
+
+## Test taking (room codes removed)
+
+Students start tests directly; there is no room code, waiting room or WebSocket any more.
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/quizzes/published` | Any | Lightweight cards: `question_count`, `sections`, `subjects`, `has_solution_pdf`, `in_progress` (no questions/images/PDFs) |
+| GET | `/quizzes/my` | Admin | Same cards for the admin, incl. `untagged_count` |
+| GET | `/quizzes/{id}` | Any | Full quiz; students get the answer-free schema, never the solution PDF |
+| POST | `/quizzes/{id}/start-attempt` | Student | Start or resume; returns `saved_answers` for cross-device resume |
+| PUT | `/sessions/{session_id}/autosave` | Owner | Save unscored answers (409 once submitted or > 2 min past deadline) |
+| POST | `/sessions/{session_id}/submit` | Owner | Score the attempt; wrong/skipped questions go to the mistake notebook |
+| POST | `/llm/explain` | Any | 403 for students until they have submitted that test |
+
+## Mistake notebook, practice, target
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/mistakes` | Totals (due / open / mastered) and per-chapter counts |
+| GET | `/mistakes/due?chapter=&include_upcoming=` | Questions to re-attempt (no answer key) |
+| POST | `/mistakes/{item_id}/answer` | `{selected_option, response_text}` → result, correct answer, next due date |
+| POST | `/practice/weak-chapters` | New 15–20 question set from the 3 weakest chapters |
+| GET | `/practice` · `/practice/{id}` | Recent sets · one set with revealed results |
+| POST | `/practice/{id}/answer` | `{question_id, selected_option, response_text}` → instant feedback |
+| GET / PUT | `/progress/target` | `{target_marks}` out of 300 (null clears) |
+
+Schedule: a new mistake is due now; after each re-attempt it returns in 3, 7, then 21 days; a wrong re-attempt returns in 3 days and resets; **mastered after two correct in a row**. Practice only uses tests the student finished or whose window has closed.
+
+Attempt report / progress additions: `time_strategy` (slow-and-wrong > 240 s, rushed-and-wrong < 20 s, time per subject vs topper and batch), `difficulty` (easy ≥ 70 % of takers correct, hard < 30 %, needs ≥ 5 takers), `target` (gap overall and per subject, estimated JEE Main percentile; estimate only).
