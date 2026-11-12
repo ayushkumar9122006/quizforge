@@ -1,5 +1,6 @@
 import { usePublishedQuizzes } from '../../hooks/usePublishedQuizzes.js'
 import { resumableSeconds } from '../../services/attemptStorage.js'
+import InstallAppButton from '../Common/InstallAppButton.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return ''
@@ -125,6 +126,7 @@ export default function StudentHome({
           <button className="btn-sec" onClick={onHistory}>
             🗂 My Test History ({histCount || attempts.length})
           </button>
+          <InstallAppButton />
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
         </div>
       </div>
@@ -300,14 +302,14 @@ export default function StudentHome({
                   ) : availability.canStart ? (
                     (() => {
                       const left = resumableSeconds(user?.id, quiz.id)
-                      return left > 0 ? (
+                      return (left > 0 || quiz.in_progress) ? (
                         <button
                           className="btn-pri"
                           style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800, background: 'linear-gradient(135deg,#f59e0b,#f97316)' }}
                           title="Continue where you left off. Your answers are saved."
                           onClick={() => onTake(quiz)}
                         >
-                          ▶ Resume Test · {Math.floor(left / 60)}m left
+                          ▶ Resume Test{left > 0 ? ` · ${Math.floor(left / 60)}m left` : ''}
                         </button>
                       ) : (
                         <button

@@ -14,6 +14,7 @@ import MyProgress from '../components/Progress/MyProgress.jsx'
 import MistakeNotebook from '../components/Practice/MistakeNotebook.jsx'
 import WeakChapterPractice from '../components/Practice/WeakChapterPractice.jsx'
 import { resumableSeconds, clearAttempt } from '../services/attemptStorage.js'
+import { enterFullscreen, exitFullscreen } from '../services/fullscreen.js'
 import { login as apiLogin } from '../services/authService.js'
 
 function formatIST(dateStr) {
@@ -168,7 +169,7 @@ export default function StudentPage({
   const handleTake = (quiz) => {
     setStartError(null)
     // An unfinished attempt on this device → skip the instructions and resume directly
-    if (resumableSeconds(user?.id, quiz.id) > 0) {
+    if (resumableSeconds(user?.id, quiz.id) > 0 || quiz.in_progress) {
       handleStartAttemptNow(quiz)
       return
     }
@@ -179,6 +180,8 @@ export default function StudentPage({
   const handleStartAttemptNow = async (quizArg) => {
     const target = (quizArg && quizArg.id) ? quizArg : instructionTarget
     if (!target || startingAttempt) return
+    // Must run inside the click (user gesture) — before any await
+    enterFullscreen()
     setStartingAttempt(true)
     setStartError(null)
 
@@ -205,6 +208,7 @@ export default function StudentPage({
       setScreen('quiz')
     } catch (err) {
       console.error('Failed to start attempt:', err)
+      exitFullscreen()
       setStartError(err?.response?.data?.detail || 'Failed to start quiz attempt. Please check availability window.')
       // Test already finished/closed on the server → forget the stale local copy
       if ([400, 403, 404].includes(err?.response?.status)) clearAttempt(user?.id, target.id)
@@ -409,6 +413,8 @@ export default function StudentPage({
           <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 8, fontSize: 14 }}>Rules & Guidelines:</div>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li><strong>Timer starts immediately</strong> upon clicking "Start Test Now".</li>
+            <li><strong>Fullscreen:</strong> the test opens in fullscreen. Leaving fullscreen or switching tabs counts as a strike; <strong>3 strikes auto-submit</strong>.</li>
+            <li><strong>Autosave:</strong> answers are saved on this device instantly and to the server every 30 seconds. If your connection drops, keep going.</li>
             <li><strong>Clear Response:</strong> Use the "Clear Response" button anytime to deselect an answer without affecting your "Mark for Review" status.</li>
             <li><strong>Mark for Review:</strong> You can mark questions for later review and return to them using the question palette.</li>
             <li><strong>Scoring:</strong> Correct answers receive positive marks. Incorrect answers receive negative marks penalty. Unanswered/skipped questions carry zero penalty.</li>

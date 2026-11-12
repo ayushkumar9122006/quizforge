@@ -5,6 +5,7 @@ import Lightbox      from '../Common/Lightbox.jsx'
 import { formatTime } from '../../services/utils.js'
 import { attemptKey, readAttempt, writeAttempt, clearAttempt } from '../../services/attemptStorage.js'
 import { restoreSavedAnswers } from '../../services/answerPayload.js'
+import { fullscreenSupported, isFullscreen, enterFullscreen, exitFullscreen } from '../../services/fullscreen.js'
 
 const LABELS = ['A','B','C','D','E','F']
 
@@ -224,6 +225,7 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
         // Mark as submitted and clean up storage only after confirmed success
         submittedRef.current = true
         clearAttempt(userId, quiz.id)
+        exitFullscreen()
         try {
           localStorage.removeItem(storageDeadlineKey)
           localStorage.removeItem(storageAnswersKey)
@@ -245,7 +247,7 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
   )
 
   // ── Centralized Tab-Switch Violation Handler ──
-  const handleTabViolation = useCallback(() => {
+  const handleTabViolation = useCallback((reason = 'tab') => {
     if (!isMountedRef.current) return
     if (isSubmittingRef.current || submittedRef.current) return
     const now = Date.now()
@@ -264,11 +266,11 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
     } catch {}
 
     if (nextCount === 1) {
-      setTabWarningModal({ count: 1 })
+      setTabWarningModal({ count: 1, reason })
     } else if (nextCount === 2) {
-      setTabWarningModal({ count: 2 })
+      setTabWarningModal({ count: 2, reason })
     } else if (nextCount >= 3) {
-      setTabWarningModal({ count: 3 })
+      setTabWarningModal({ count: 3, reason })
       // Auto-submit immediately using existing safe submission pipeline
       doSubmit(true)
     }
@@ -311,6 +313,27 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
       window.removeEventListener('focus', onWindowFocus)
     }
   }, [handleTabViolation])
+
+  // ── Fullscreen test mode: leaving fullscreen counts as a strike (same 3-strike rule) ──
+  const fsMode = fullscreenSupported()
+  const [inFs, setInFs] = useState(() => isFullscreen())
+  const wasFsRef = useRef(isFullscreen())
+  useEffect(() => {
+    if (!fsMode) return
+    const onChange = () => {
+      const now = isFullscreen()
+      setInFs(now)
+      if (!now && wasFsRef.current && !submittedRef.current && !isSubmittingRef.current) handleTabViolation('fullscreen')
+      wasFsRef.current = now
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    document.addEventListener('webkitfullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      document.removeEventListener('webkitfullscreenchange', onChange)
+    }
+  }, [fsMode, handleTabViolation])
+  const returnToFullscreen = () => { if (fsMode) enterFullscreen() }
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -986,6 +1009,13 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
       )}
 
       {/* ── Tab Switch Warning Modal (Strikes 1, 2, 3) ── */}
+      {fsMode && !inFs && !tabWarningModal && !submittedRef.current && (
+        <div role="alert" style={{ position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)', zIndex:450, background:'#111827', color:'#fff', borderRadius:14, padding:'10px 14px', display:'flex', gap:12, alignItems:'center', boxShadow:'0 12px 30px rgba(0,0,0,.3)', maxWidth:'calc(100% - 32px)' }}>
+          <span style={{ fontSize:13 }}>This test runs in fullscreen. Leaving it counts as a strike.</span>
+          <button className="btn-pri" style={{ fontSize:12, padding:'6px 12px', whiteSpace:'nowrap' }} onClick={returnToFullscreen}>⛶ Enter fullscreen</button>
+        </div>
+      )}
+
       {tabWarningModal && (
         <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:500,backdropFilter:'blur(4px)' }}>
           <div style={{ background:'#fff',borderRadius:20,padding:'2rem',maxWidth:440,width:'90%',boxShadow:'0 25px 70px rgba(0,0,0,.25)',textAlign:'center' }}>
@@ -999,19 +1029,19 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
                   Violation 1 of 3
                 </div>
                 <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#111827' }}>
-                  Tab Switch Detected
+                  {tabWarningModal.reason === 'fullscreen' ? 'You Left Fullscreen' : 'Tab Switch Detected'}
                 </h3>
                 <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
-                  You navigated away from the quiz window. This is your <strong>1st warning</strong>.<br/>
-                  If you switch tabs <strong>2 more times</strong>, your quiz will be <strong>automatically submitted</strong> immediately.
+                  {tabWarningModal.reason === 'fullscreen' ? 'Leaving fullscreen during the test counts as a violation.' : 'You navigated away from the quiz window.'} This is your <strong>1st warning</strong>.<br/>
+                  After <strong>2 more</strong> (tab switches or leaving fullscreen), your quiz will be <strong>automatically submitted</strong> immediately.
                 </p>
                 <button
                   type="button"
                   className="btn-pri"
                   style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700 }}
-                  onClick={() => setTabWarningModal(null)}
+                  onClick={() => { setTabWarningModal(null); returnToFullscreen() }}
                 >
-                  I Understand, Return to Quiz
+                  {fsMode ? 'I Understand, Return to Fullscreen' : 'I Understand, Return to Quiz'}
                 </button>
               </>
             )}
@@ -1022,19 +1052,19 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
                   Violation 2 of 3 — Final Warning
                 </div>
                 <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#b91c1c' }}>
-                  Warning: Second Tab Switch
+                  {tabWarningModal.reason === 'fullscreen' ? 'Warning: You Left Fullscreen Again' : 'Warning: Second Tab Switch'}
                 </h3>
                 <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
-                  You left the quiz tab again. This is your <strong>2nd violation</strong>.<br/>
+                  {tabWarningModal.reason === 'fullscreen' ? 'You left fullscreen again.' : 'You left the quiz tab again.'} This is your <strong>2nd violation</strong>.<br/>
                   <strong style={{ color:'#dc2626' }}>ONE MORE VIOLATION</strong> will immediately auto-submit your test and lock your answers.
                 </p>
                 <button
                   type="button"
                   className="btn-pri"
                   style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700,background:'#dc2626' }}
-                  onClick={() => setTabWarningModal(null)}
+                  onClick={() => { setTabWarningModal(null); returnToFullscreen() }}
                 >
-                  I Understand, Resume Test
+                  {fsMode ? 'I Understand, Return to Fullscreen' : 'I Understand, Resume Test'}
                 </button>
               </>
             )}

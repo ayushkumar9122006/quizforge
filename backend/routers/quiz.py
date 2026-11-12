@@ -56,7 +56,14 @@ async def published_quizzes(
     user: User = Depends(get_current_user),
 ):
     """Published quizzes as lightweight cards. Full questions come from GET /quizzes/{id} once a test starts."""
-    return await list_quiz_summaries(db, published_only=True)
+    cards = await list_quiz_summaries(db, published_only=True)
+    open_ids = set((await db.execute(
+        select(QuizSession.quiz_id).join(Attempt, Attempt.session_id == QuizSession.id)
+        .where(Attempt.student_id == user.id, Attempt.status == AttemptStatus.in_progress.value)
+    )).scalars().all())
+    for c in cards:
+        c["in_progress"] = c["id"] in open_ids
+    return cards
 
 
 @router.get("/{quiz_id}")

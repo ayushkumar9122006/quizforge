@@ -307,6 +307,7 @@ class QuizSummaryOut(BaseModel):
     negative_marks: Optional[float] = None
     has_solution_pdf: bool = False
     solution_pdf_name: Optional[str] = None
+    in_progress: bool = False   # this student has an unfinished attempt (resume, even on a new device)
 
 
 # ── Bulk Import Schemas ────────────────────────────────────────────────────────
