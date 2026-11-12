@@ -7,7 +7,7 @@ from schemas.quiz import (
     QuizCreate, QuizUpdate, QuizOut, QuizStudentOut, QuizSummaryOut,
     QuizAvailabilityUpdate,
     BulkImportAnalyzeResponse, BulkImportConfirmRequest,
-    QuestionChapterBulkUpdate,
+    QuestionChapterBulkUpdate, AnswerKeyBulkUpdate,
 )
 from schemas.session import StartQuizResponse
 from crud.quiz import (
@@ -539,3 +539,54 @@ async def auto_tag_chapters(
     await db.flush()
     db.expire_all()
     return await get_quiz(db, quiz_id)
+
+
+@router.put("/{quiz_id}/answer-keys")
+async def update_answer_keys(
+    quiz_id: str,
+    payload: AnswerKeyBulkUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Set or correct answer keys. Every submitted attempt of the quiz is re-scored
+    immediately (like a revised JEE answer key), ranks and analytics follow.
+    """
+    import re as _re
+    from crud.session import rescore_quiz, has_answer_key
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    by_id = {q.id: q for q in quiz.questions}
+    for u in payload.updates:
+        q = by_id.get(u.question_id)
+        if not q:
+            raise HTTPException(status_code=400, detail=f"Question {u.question_id} is not in this quiz")
+        t = q.question_type or "single_correct"
+        n_opts = len(q.options or [])
+        if t == "numerical":
+            raw = (u.raw_answer or "").strip()
+            if raw and not _re.fullmatch(r"[-+]?\d+(\.\d{1,2})?", raw):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: numerical answer must be a number with up to 2 decimals")
+            q.raw_answer = raw or None
+        elif t == "multi_correct":
+            letters = sorted(set(_re.findall(r"[A-Fa-f]", u.raw_answer or "")), key=str.upper)
+            letters = [l.upper() for l in letters]
+            if any(ord(l) - 65 >= n_opts for l in letters):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: option letter out of range")
+            q.raw_answer = ", ".join(letters) or None
+            q.correct_answer = None
+        else:
+            if u.correct_answer is not None and not (0 <= u.correct_answer < max(n_opts, 1)):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: option out of range")
+            q.correct_answer = u.correct_answer
+            q.raw_answer = chr(65 + u.correct_answer) if u.correct_answer is not None else None
+    await db.flush()
+    rescored = await rescore_quiz(db, quiz_id)
+    db.expire_all()
+    fresh = await get_quiz(db, quiz_id)
+    return {
+        "rescored_attempts": rescored,
+        "missing_key_count": sum(1 for q in fresh.questions if not has_answer_key(q)),
+        "quiz": QuizOut.model_validate(fresh),
+    }

@@ -233,3 +233,27 @@ Students start tests directly; there is no room code, waiting room or WebSocket 
 Schedule: a new mistake is due now; after each re-attempt it returns in 3, 7, then 21 days; a wrong re-attempt returns in 3 days and resets; **mastered after two correct in a row**. Practice only uses tests the student finished or whose window has closed.
 
 Attempt report / progress additions: `time_strategy` (slow-and-wrong > 240 s, rushed-and-wrong < 20 s, time per subject vs topper and batch), `difficulty` (easy ≥ 70 % of takers correct, hard < 30 %, needs ≥ 5 takers), `target` (gap overall and per subject, estimated JEE Main percentile; estimate only).
+
+## Answer keys
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| PUT | `/quizzes/{id}/answer-keys` | Admin | `{updates: [{question_id, correct_answer, raw_answer}]}`. Single / assertion / match: `correct_answer` 0–5. Numerical: `raw_answer` like `12.5`. Multi: `raw_answer` like `A, C`. Re-scores every submitted attempt and returns `{rescored_attempts, missing_key_count, quiz}` |
+
+A question without an answer key is **ungraded**: no marks, no penalty, not counted in `total_marks`, left out of analytics, the notebook and practice. The AI no longer guesses keys (it used to default to option A); it only fills a key when an OpenRouter key is set and its reply is a clear option. `missing_key_count` is on every admin quiz card.
+
+Late submits: a submit more than 90 s past the server deadline (duration from `started_at`, capped by `availability_end`) ignores the posted answers and scores the last autosaved ones, marked `auto_submitted`.
+
+## Streaks, badges, most improved
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/progress/streak` | Any | `current`, `longest`, `daily_goal`, `today {revised, tests, met, remaining}`, `at_risk`, last 14 days, `message` |
+| PUT | `/progress/daily-goal` | Any | `{daily_goal: 1–100}` (UI offers 5, 10, 15, 20, 30, 50) |
+| GET | `/progress/badges` | Any | All 16 badges with `earned`, `earned_at`, `progress {current, goal, pct}`, `detail`, `new` (earned in the last 3 days) |
+| GET | `/progress/leaderboard/improved?limit=10` | Any | Most improved: top N + `me` for students; everyone (with `student_id`) for admins |
+| GET | `/progress/students/{id}/motivation` | Admin | One student's streak + badges |
+
+A day counts towards the streak when the student revises their daily goal of questions (notebook re-attempts + practice answers) or submits a test. Days are calendar days in `STREAK_TIMEZONE` (default `Asia/Kolkata`). The streak stays alive through today if yesterday counted.
+
+Most improved = average of the last 2 tests − average of the 2 before (only 2 tests: latest − first), in percentile points when most tests had ≥ 5 takers (only those tests count), otherwise in score % points.

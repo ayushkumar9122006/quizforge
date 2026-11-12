@@ -61,6 +61,9 @@ async def autosave(
     return AutosaveOut(saved=saved, saved_at=datetime.now(timezone.utc))
 
 
+LATE_GRACE = timedelta(seconds=90)   # network / clock slack for the client's own deadline submit
+
+
 def _attempt_deadline(attempt, quiz):
     base = int(round(quiz.effective_total_duration_minutes * 60))
     started = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
@@ -125,17 +128,25 @@ async def submit(
     # ONLY place correct answers are ever resolved for scoring purposes.
     await resolve_unset_answers(db, questions)
 
-    # Determine if auto-submission is required by server-authoritative deadline
-    total_q = len(questions) or 1
-    base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
-    started_at_tz = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
-    deadline = started_at_tz + timedelta(seconds=base_duration_sec)
-    if quiz.availability_end:
-        end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
-        deadline = min(deadline, end_tz)
-
+    # Server-authoritative deadline (same rule as start-attempt and autosave)
+    deadline = _attempt_deadline(attempt, quiz)
     now_utc = datetime.now(timezone.utc)
     is_auto = auto or (now_utc > deadline + timedelta(seconds=5))
+    if now_utc > deadline + LATE_GRACE:
+        # Too late: ignore the late payload and score what was saved before time ran out
+        from models.all_models import Answer
+        from schemas.session import AnswerSubmit
+        saved = (await db.execute(select(Answer).where(Answer.attempt_id == attempt.id))).scalars().all()
+        started = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+        data = AttemptSubmit(
+            answers=[
+                AnswerSubmit(question_id=a.question_id, selected_option=a.selected_option, response_text=a.response_text,
+                             marked_for_review=a.marked_for_review, time_taken_sec=a.time_taken_sec or 0)
+                for a in saved
+            ],
+            time_taken_sec=int((deadline - started).total_seconds()),
+        )
+        is_auto = True
 
     attempt, results = await submit_attempt(db, attempt.id, data, questions, auto=is_auto)
 

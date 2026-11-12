@@ -550,7 +550,7 @@ export default function AdminDashboard({ onLogout }) {
               </span>
 
               {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: 7, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 7, flexShrink: 0, maxWidth: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
                 {/* Feature 2: Edit Availability */}
                 <button
                   className="btn-sec"
@@ -618,6 +618,16 @@ export default function AdminDashboard({ onLogout }) {
                 >
                   🏷 Chapters{untaggedCount > 0 ? ` (${untaggedCount} untagged)` : ''}
                 </button>
+                {quiz.missing_key_count > 0 && (
+                  <button
+                    className="btn-sec"
+                    style={{ fontSize: 12, padding: '6px 11px', color: '#b91c1c', borderColor: '#fca5a5', background: '#fef2f2', fontWeight: 800 }}
+                    title="These questions are not scored until you set their answer key"
+                    onClick={() => { setTaggingQuizId(quiz.id); setScreen('chapters') }}
+                  >
+                    🔑 {quiz.missing_key_count} missing answer key{quiz.missing_key_count !== 1 ? 's' : ''}
+                  </button>
+                )}
                 <button
                   className="btn-sec"
                   style={{ fontSize: 12, padding: '6px 11px' }}

@@ -21,6 +21,17 @@ def _pos_neg(q) -> tuple[float, float]:
     return pos, neg
 
 
+def has_answer_key(q) -> bool:
+    """Whether a question has a usable answer key for its type."""
+    t = getattr(q, "question_type", "single_correct") or "single_correct"
+    raw = str(getattr(q, "raw_answer", None) or "").strip()
+    if t == "numerical":
+        return bool(re.search(r"[-+]?\d+(?:\.\d+)?", raw))
+    if t == "multi_correct":
+        return bool(re.search(r"\b[A-Fa-f0-9]\b", raw)) or q.correct_answer is not None
+    return q.correct_answer is not None or (len(raw) == 1 and raw.upper() in "ABCDEF")
+
+
 def evaluate_answer(q, sel_opt, resp_text) -> dict:
     """
     Score one answer exactly like a test submission (shared by tests, the mistake
@@ -29,6 +40,10 @@ def evaluate_answer(q, sel_opt, resp_text) -> dict:
     """
     pos, neg = _pos_neg(q)
     q_type = getattr(q, "question_type", "single_correct") or "single_correct"
+
+    if not has_answer_key(q):
+        # No key yet: never penalise. Counted once the admin sets the key (all attempts re-score).
+        return {"kind": "ungraded", "is_correct": False, "marks": 0.0}
 
     if q_type == "numerical":
         if resp_text is None or str(resp_text).strip() == "":
@@ -177,7 +192,8 @@ async def submit_attempt(
     await db.execute(delete(Answer).where(Answer.attempt_id == attempt_id))
 
     score = 0.0
-    total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
+    # Questions without an answer key are dropped from the total until the key is set
+    total_marks = sum(_pos_neg(q)[0] for q in questions if has_answer_key(q))
     answer_results: list[dict] = []
     kinds: dict[str, str] = {}
     correct_count = 0
@@ -196,7 +212,9 @@ async def submit_attempt(
         ev = evaluate_answer(q, getattr(ans_data, "selected_option", None), getattr(ans_data, "response_text", None))
         is_correct, marks_awarded = ev["is_correct"], ev["marks"]
         kinds[q.id] = ev["kind"]
-        if ev["kind"] == "skipped":
+        if ev["kind"] == "ungraded":
+            pass  # not scored, not counted
+        elif ev["kind"] == "skipped":
             skipped_count += 1
         else:
             attempted_count += 1
@@ -281,6 +299,7 @@ async def submit_attempt(
         from services.notebook_service import record_mistakes
         for q in questions:
             kinds.setdefault(q.id, "skipped")
+        kinds = {qid: k for qid, k in kinds.items() if qid in {q.id for q in questions if has_answer_key(q)}}
         if questions:
             async with db.begin_nested():  # savepoint: a notebook error can't poison the submission
                 await record_mistakes(db, attempt.student_id, questions[0].quiz_id, attempt.id, kinds)
@@ -611,3 +630,76 @@ async def autosave_attempt(db: AsyncSession, attempt: Attempt, submission: Attem
     attempt.time_taken_sec = int(submission.time_taken_sec or 0)
     await db.flush()
     return n
+
+
+async def rescore_quiz(db: AsyncSession, quiz_id: str) -> int:
+    """
+    Re-score every submitted attempt of a quiz with the current answer keys (used
+    after an admin sets a missing key or corrects a wrong one), then refresh
+    leaderboards and ranks. Returns the number of attempts re-scored.
+    """
+    from models.all_models import Quiz
+    quiz = (await db.execute(
+        select(Quiz).options(selectinload(Quiz.questions)).where(Quiz.id == quiz_id)
+    )).scalar_one_or_none()
+    if not quiz:
+        return 0
+    q_map = {q.id: q for q in quiz.questions}
+    total_marks = sum(_pos_neg(q)[0] for q in quiz.questions if has_answer_key(q))
+    attempts = (await db.execute(
+        select(Attempt).options(selectinload(Attempt.answers))
+        .join(QuizSession, Attempt.session_id == QuizSession.id)
+        .where(
+            QuizSession.quiz_id == quiz_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+    )).scalars().all()
+    sessions = set()
+    for att in attempts:
+        score = 0.0
+        correct = incorrect = skipped = attempted = 0
+        kinds: dict[str, str] = {}
+        seen = set()
+        for ans in att.answers:
+            q = q_map.get(ans.question_id)
+            if not q:
+                continue
+            seen.add(q.id)
+            ev = evaluate_answer(q, ans.selected_option, ans.response_text)
+            ans.is_correct, ans.marks_awarded = ev["is_correct"], ev["marks"]
+            kinds[q.id] = ev["kind"]
+            if ev["kind"] == "ungraded":
+                continue
+            if ev["kind"] == "skipped":
+                skipped += 1
+                continue
+            attempted += 1
+            correct += ev["kind"] == "correct"
+            incorrect += ev["kind"] == "wrong"
+            score += ev["marks"]
+        for q in quiz.questions:  # questions the student never saw an answer row for
+            if q.id not in seen and has_answer_key(q):
+                skipped += 1
+                kinds[q.id] = "skipped"
+        att.score = score
+        att.total_marks = total_marks
+        att.correct_count, att.incorrect_count, att.skipped_count = correct, incorrect, skipped
+        att.accuracy = round((correct / attempted) * 100, 1) if attempted else 0.0
+        lb = (await db.execute(select(LeaderboardEntry).where(
+            LeaderboardEntry.session_id == att.session_id, LeaderboardEntry.student_id == att.student_id
+        ))).scalar_one_or_none()
+        if lb:
+            lb.score, lb.total_marks, lb.accuracy = score, total_marks, att.accuracy
+        sessions.add(att.session_id)
+        try:
+            from services.notebook_service import record_mistakes
+            async with db.begin_nested():
+                await record_mistakes(db, att.student_id, quiz_id, att.id,
+                                      {k: v for k, v in kinds.items() if has_answer_key(q_map[k])}, reopen=False)
+        except Exception as e:
+            print(f"[notebook] rescore capture failed: {e}")
+    quiz.total_marks = total_marks
+    await db.flush()
+    for sid in sessions:
+        await _recompute_ranks(db, sid)
+    return len(attempts)

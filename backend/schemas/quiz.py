@@ -301,6 +301,7 @@ class QuizSummaryOut(BaseModel):
     updated_at: datetime
     question_count: int = 0
     untagged_count: int = 0
+    missing_key_count: int = 0
     sections: List[QuizSectionSummary] = []
     subjects: List[str] = []
     positive_marks: Optional[float] = None
@@ -388,3 +389,14 @@ class QuestionChapterUpdate(BaseModel):
 
 class QuestionChapterBulkUpdate(BaseModel):
     updates: List[QuestionChapterUpdate]
+
+
+
+class AnswerKeyUpdate(BaseModel):
+    question_id: str
+    correct_answer: Optional[int] = None     # single correct / assertion-reason / match the column
+    raw_answer: Optional[str] = None         # numerical value, or letters for multi-correct ("A, C")
+
+
+class AnswerKeyBulkUpdate(BaseModel):
+    updates: List[AnswerKeyUpdate]

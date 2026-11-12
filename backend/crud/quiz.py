@@ -302,6 +302,15 @@ async def list_quiz_summaries(db: AsyncSession, *, creator_id: Optional[str] = N
     per_quiz: dict = {}
     for quiz_id, section, subject, cnt, first_idx, untagged, pos, neg in sec_rows:
         per_quiz.setdefault(quiz_id, []).append((first_idx, section, subject, cnt, untagged or 0, pos, neg))
+    # answer keys: same rule as scoring (crud.session.has_answer_key)
+    from crud.session import has_answer_key
+    missing: dict = {}
+    for q in (await db.execute(
+        select(Question.quiz_id, Question.question_type, Question.correct_answer, Question.raw_answer)
+        .where(Question.quiz_id.in_(ids))
+    )).all():
+        if not has_answer_key(q):
+            missing[q.quiz_id] = missing.get(q.quiz_id, 0) + 1
     out = []
     for x in quizzes:
         secs = sorted(per_quiz.get(x["id"], []), key=lambda t: t[0])
@@ -315,6 +324,7 @@ async def list_quiz_summaries(db: AsyncSession, *, creator_id: Optional[str] = N
             "time_per_question_min": round(float(tot) / (n or 1), 2),
             "question_count": n,
             "untagged_count": sum(t[4] for t in secs),
+            "missing_key_count": missing.get(x["id"], 0),
             "sections": [{"name": t[1], "subject": t[2], "count": t[3]} for t in secs],
             "subjects": list(dict.fromkeys(t[2] for t in secs if t[2])),
             "positive_marks": secs[0][5] if secs else None,

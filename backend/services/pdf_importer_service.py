@@ -214,6 +214,12 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
 
     # 4. Map correct answer letter to 0-based index or format multi/numerical answers
     correct_idx = None
+    # A bare number is a numerical answer unless the question has options to point at
+    # (e.g. "Answer: 4" with no options is the value 4, not option D; "2.5" is never letters)
+    if correct_raw and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", correct_raw.strip()) and (
+        not options or "." in correct_raw or len(correct_raw.strip().lstrip("+-")) > 1
+    ):
+        return _clean_text(statement), options, None, correct_raw.strip(), explanation
     if correct_raw:
         # Check for multi-letter pattern like A, B, C or A,B
         multi_letters = [l.upper() for l in re.findall(r"\b([a-fA-F1-6])\b", correct_raw)]

@@ -1,6 +1,7 @@
 import { usePublishedQuizzes } from '../../hooks/usePublishedQuizzes.js'
 import { resumableSeconds } from '../../services/attemptStorage.js'
 import InstallAppButton from '../Common/InstallAppButton.jsx'
+import { StreakChip, useStreak } from '../Progress/Motivation.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return ''
@@ -35,6 +36,7 @@ export default function StudentHome({
   onOpenNotices
 }) {
   const { quizzes, loading, error, reload } = usePublishedQuizzes()
+  const [streak] = useStreak(Boolean(onNotebook))
 
   // Map of completed quiz IDs
   const completedMap = {}
@@ -108,6 +110,7 @@ export default function StudentHome({
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 900, margin: '0 0 4px', color: '#111827' }}>Available Tests</h2>
           <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>Welcome back, <strong style={{ color: '#111827' }}>{user?.name}</strong>!</p>
+          {streak && <div style={{ marginTop: 10 }}><StreakChip streak={streak} onClick={onNotebook} /></div>}
         </div>
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
           {onProgress && (

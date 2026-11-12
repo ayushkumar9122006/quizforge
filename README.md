@@ -29,6 +29,8 @@ QuizForge is a full-stack, real-time quiz platform:
 - **Time strategy, easy-question mistakes and a target tracker** with an estimated JEE Main percentile.
 - **Autosave every 30 s**, resume on any device, **installable app** with **fullscreen test mode**.
 - Optional **Cloudinary** image storage (`CLOUDINARY_URL`), with `backend/migrate_images_to_cloudinary.py` for existing images.
+- **Daily streak and goal, 16 badges, and a most-improved leaderboard** that ranks students by how much they improved, not by the top score.
+- **Answer keys are never guessed**: questions without a key are ungraded until the admin sets it; setting or fixing a key re-scores every attempt.
 
 ### JEE progress analytics
 Every question carries a **subject** and a **JEE syllabus chapter**: the AI suggests and the admin confirms. From that, students get a **My Progress** dashboard showing whether they are improving test after test, which chapters they keep getting wrong, and what to revise next. Every result screen shows rank, percentile, subject-wise rank and where the marks were lost. Admins get a **Students & Progress** view with per-student drill-down and the chapters the whole batch struggles with. See `docs/API.md → Progress Analytics`.
@@ -77,6 +79,7 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
 | `UPLOAD_DIR` | Directory for static file mounts (auto-created on boot) | `uploads` |
 | `CLOUDINARY_URL` | `cloudinary://<api_key>:<api_secret>@<cloud_name>`. When set, question/option images are stored on Cloudinary instead of the DB | *(unset)* |
+| `STREAK_TIMEZONE` | Time zone that decides when a streak day starts | `Asia/Kolkata` |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Used by `seed.py` | see `.env.example` |
 | `SEED_STUDENT_EMAIL` / `SEED_STUDENT_PASSWORD` | Used by `seed.py` | see `.env.example` |
 

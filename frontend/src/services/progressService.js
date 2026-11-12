@@ -88,3 +88,35 @@ export async function setTarget(targetMarks) {
   const { data } = await api.put('/progress/target', { target_marks: targetMarks || null })
   return data
 }
+
+// Set / correct answer keys; the backend re-scores every submitted attempt
+export async function saveAnswerKeys(quizId, updates) {
+  const { data } = await api.put(`/quizzes/${quizId}/answer-keys`, { updates }, { timeout: 120000 })
+  return data
+}
+
+// ── Streaks, daily goal, badges, most improved ────────────────────────────────
+export async function getStreak() {
+  const { data } = await api.get('/progress/streak')
+  return data
+}
+
+export async function setDailyGoal(dailyGoal) {
+  const { data } = await api.put('/progress/daily-goal', { daily_goal: dailyGoal })
+  return data
+}
+
+export async function getBadges() {
+  const { data } = await api.get('/progress/badges')
+  return data
+}
+
+export async function getMostImproved(limit = 10) {
+  const { data } = await api.get(`/progress/leaderboard/improved?limit=${limit}`)
+  return data
+}
+
+export async function getStudentMotivation(studentId) {
+  const { data } = await api.get(`/progress/students/${studentId}/motivation`)
+  return data
+}

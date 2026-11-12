@@ -17,6 +17,7 @@ import {
   TrendBadge, StatCard, Panel, PctBar, SubjectDot, fmtDate, shortTitle, QTYPE_LABELS,
 } from './ui.jsx'
 import { TargetPanel, TimeStrategySummary, DifficultySummary } from './StrategyPanels.jsx'
+import MotivationSection from './Motivation.jsx'
 
 const DIAG_LABEL = {
   avoiding: { text: 'Avoiding', color: '#92400e', bg: '#fef3c7' },
@@ -265,6 +266,8 @@ export default function ProgressDashboard({ data, title = 'My Progress', onBack,
           )}
 
           <TargetPanel target={data.target} editable={!adminView} onSaved={onReload} />
+
+          {(!adminView || data.student?.id) && <MotivationSection studentId={adminView ? data.student.id : null} />}
 
           <Panel title="Score curve across tests" icon="📈" right={<span style={{ fontSize: 12, color: '#94a3b8' }}>Percentile adjusts for how hard each paper was</span>}>
             {timeline.length < 2 && <p style={{ fontSize: 13, color: '#94a3b8', margin: '0 0 8px' }}>One test so far. The curve fills in as more tests are taken.</p>}

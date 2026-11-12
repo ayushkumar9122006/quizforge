@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import { createWeakChapterPractice, getPracticeSet, listPracticeSets, answerPractice } from '../../services/notebookService.js'
 import QuestionRunner from './QuestionRunner.jsx'
+import { StreakChip, useStreak } from '../Progress/Motivation.jsx'
 import { Panel, SubjectDot, Loading, ErrorBox, fmtDate } from '../Progress/ui.jsx'
 
 export default function WeakChapterPractice({ onBack, onNotebook, autoStart = false }) {
@@ -12,6 +13,7 @@ export default function WeakChapterPractice({ onBack, onNotebook, autoStart = fa
   const [active, setActive] = useState(null)
   const [summary, setSummary] = useState(null)
   const [busy, setBusy] = useState(false)
+  const [streak, refreshStreak] = useStreak()
   const [error, setError] = useState(null)
 
   const loadList = async () => {
@@ -40,11 +42,12 @@ export default function WeakChapterPractice({ onBack, onNotebook, autoStart = fa
           </span>
         ))}
         <span style={{ fontSize: 12, color: '#94a3b8', alignSelf: 'center' }}>Untimed · doesn't affect your rank or score trend</span>
+        <span style={{ marginLeft: 'auto' }}><StreakChip streak={streak} compact /></span>
       </div>
       <QuestionRunner
         title="Practice: weak chapters"
         items={active.items.map(it => ({ key: it.question.id, question: it.question, result: it.result }))}
-        onCheck={(item, ans) => answerPractice(active.id, item.key, ans)}
+        onCheck={async (item, ans) => { const r = await answerPractice(active.id, item.key, ans); refreshStreak(); return r }}
         onFinish={results => {
           const vals = Object.values(results)
           setSummary({ total: vals.length, correct: vals.filter(r => r.kind === 'correct').length })

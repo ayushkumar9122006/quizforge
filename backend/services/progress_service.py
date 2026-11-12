@@ -33,6 +33,8 @@ from models.all_models import (
     Answer, Attempt, AttemptStatus, Question, Quiz, QuizSession, User,
 )
 from services.jee_syllabus import SUBJECTS, infer_subject
+from types import SimpleNamespace
+from crud.session import has_answer_key
 from services.jee_percentile import estimate_percentile, scale_to_300, marks_for_percentile, SOURCE_NOTE
 
 DONE = [AttemptStatus.submitted.value, AttemptStatus.auto_submitted.value]
@@ -189,12 +191,14 @@ async def _load(db: AsyncSession, quiz_ids: Optional[Iterable[str]] = None) -> d
             select(
                 Question.id, Question.quiz_id, Question.order_index, Question.section, Question.subject,
                 Question.chapter, Question.chapter_source, Question.question_type, Question.marks,
+                Question.correct_answer, Question.raw_answer,
                 Question.positive_marks, Question.negative_marks, Question.created_at,
             ).where(Question.quiz_id.in_(qids)).order_by(Question.quiz_id, Question.order_index)
         )).all():
             q = dict(r._mapping)
             q["subject_key"] = q["subject"] or infer_subject(q["section"], quizzes.get(q["quiz_id"], {}).get("subject")) or OTHER_SUBJECT
             q["chapter_key"] = q["chapter"] or UNTAGGED
+            q["has_key"] = has_answer_key(SimpleNamespace(**q))
             questions[q["quiz_id"]].append(q)
 
     answers: dict[str, dict[str, dict]] = defaultdict(dict)
@@ -233,6 +237,8 @@ def _summarize(att: dict, qs: list[dict], ans_map: dict[str, dict]) -> dict:
         # Questions appended to a quiz after this attempt was submitted don't count against it
         if submitted and q["created_at"] and q["created_at"] > submitted and q["id"] not in ans_map:
             continue
+        if not q["has_key"]:
+            continue  # ungraded until the admin sets an answer key
         a = ans_map.get(q["id"])
         kind = _classify(a)
         marks = float(a["marks_awarded"] or 0) if a else 0.0

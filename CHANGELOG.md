@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] — Streaks, badges, most improved; answer-key safety
+
+### Added
+- **Daily goal + streak**: a day counts when you revise your goal (default 10 questions from the notebook or weak-chapter practice) or submit a test. Streak chip on Home, the notebook and practice; streak panel with the last 14 days and a goal picker on My Progress.
+- **Badges** (16): first test, 5/10/25 tests, mastered 10/50/100 mistakes, 3/7/30-day streak, 5 practice sets, beat your target, new personal best, rank climber (+20 percentile), top 10 %, no silly mistakes. Locked badges show progress; new ones are flagged.
+- **Most improved leaderboard**: ranked by improvement (last 2 tests vs the 2 before), not the top score. On My Progress (top 10 + you) and as an admin tab in Students & Progress.
+- **Answer-key editor** on the admin Chapters screen (now "Chapters & answer keys"), with a "Missing key" filter; saving re-scores every submitted attempt. Admin quiz cards show "🔑 N missing answer keys".
+- Migration `0012` (users.daily_goal, mistake_reviews; seeded from existing notebook reviews).
+
+### Fixed
+- **Wrong marks from guessed keys**: the AI used to default a missing key to option A when it had no API key or failed. It no longer guesses; questions without a key are ungraded (no marks, no penalty, excluded from totals and analytics) until the admin sets one.
+- **PDF import of numerical answers**: "Answer: 12" / "2.5" are kept as numerical answers instead of being mapped to an option letter.
+- **Late submits**: a submit more than 90 s past the server deadline scores the last autosaved answers, not the late payload.
+
 ## [Unreleased] — Next level: notebook, practice, autosave, PWA
 
 ### Added

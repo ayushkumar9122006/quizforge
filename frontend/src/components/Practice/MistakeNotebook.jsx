@@ -5,6 +5,7 @@
 import { useEffect, useState } from 'react'
 import { getNotebook, getDueMistakes, answerMistake } from '../../services/notebookService.js'
 import QuestionRunner from './QuestionRunner.jsx'
+import { StreakChip, useStreak } from '../Progress/Motivation.jsx'
 import { Panel, StatCard, SubjectDot, Loading, ErrorBox, fmtDate } from '../Progress/ui.jsx'
 
 function whenText(d) {
@@ -19,6 +20,7 @@ export default function MistakeNotebook({ onBack, onPractice }) {
   const [session, setSession] = useState(null) // { title, items }
   const [loadingSession, setLoadingSession] = useState(false)
   const [subject, setSubject] = useState('All')
+  const [streak, refreshStreak] = useStreak()
 
   const load = async () => {
     setError(null)
@@ -50,12 +52,15 @@ export default function MistakeNotebook({ onBack, onPractice }) {
 
   if (session) return (
     <div style={{ maxWidth: 820, margin: '0 auto', padding: '2rem 1.5rem' }}>
-      <button className="btn-ghost" onClick={() => { setSession(null); load() }}>← Back to notebook</button>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+        <button className="btn-ghost" onClick={() => { setSession(null); load(); refreshStreak() }}>← Back to notebook</button>
+        <StreakChip streak={streak} compact />
+      </div>
       <div style={{ marginTop: 12 }}>
         <QuestionRunner
           title={session.title}
           items={session.items}
-          onCheck={(item, ans) => answerMistake(item.key, ans)}
+          onCheck={async (item, ans) => { const r = await answerMistake(item.key, ans); refreshStreak(); return r }}
           onFinish={() => { setSession(null); load() }}
           renderMeta={(_, r) => r.status === 'mastered'
             ? <span style={{ color: '#047857', fontWeight: 800 }}>🎉 Mastered: right twice in a row. Removed from your revision list.</span>
@@ -88,6 +93,8 @@ export default function MistakeNotebook({ onBack, onPractice }) {
           {loadingSession ? 'Loading…' : summary.due ? `▶ Revise ${summary.due} due now` : 'Nothing due today'}
         </button>
       </div>
+
+      {streak && <div style={{ marginBottom: 14 }}><StreakChip streak={streak} /></div>}
 
       {error && <ErrorBox text={error} />}
 

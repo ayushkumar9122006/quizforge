@@ -10,7 +10,7 @@ from contextlib import asynccontextmanager
 import os
 
 from database.config import init_db, settings
-from routers import auth, quiz, session, llm, notice, progress, notebook
+from routers import auth, quiz, session, llm, notice, progress, notebook, motivation
 
 
 @asynccontextmanager
@@ -65,6 +65,7 @@ app.include_router(session.router)
 app.include_router(llm.router)
 app.include_router(notice.router)
 app.include_router(notebook.router)   # /progress/target must register before /progress/{...} routes
+app.include_router(motivation.router)
 app.include_router(progress.router)
 
 

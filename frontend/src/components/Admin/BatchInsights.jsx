@@ -7,8 +7,9 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { getBatchInsights } from '../../services/progressService.js'
+import { getBatchInsights, getMostImproved } from '../../services/progressService.js'
 import MyProgress from '../Progress/MyProgress.jsx'
+import { MostImprovedPanel } from '../Progress/Motivation.jsx'
 import { Panel, PctBar, SubjectDot, Sparkline, StatCard, TrendBadge, Loading, ErrorBox, shortTitle, fmtDate } from '../Progress/ui.jsx'
 
 export default function BatchInsights({ onBack }) {
@@ -19,12 +20,16 @@ export default function BatchInsights({ onBack }) {
   const [query, setQuery] = useState('')
   const [trendFilter, setTrendFilter] = useState('all')
   const [subject, setSubject] = useState('All')
+  const [improved, setImproved] = useState(null)
 
   const load = async () => {
     setError(null)
     try { setData(await getBatchInsights()) } catch (e) { setError(e?.response?.data?.detail || 'Could not load batch insights.') }
   }
   useEffect(() => { load() }, [])
+  useEffect(() => {
+    if (tab === 'improved' && !improved) getMostImproved(50).then(setImproved).catch(() => setImproved({ entries: [], rule: 'Could not load.' }))
+  }, [tab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   const students = useMemo(() => (data?.students || []).filter(s =>
     (trendFilter === 'all' || s.trend === trendFilter) &&
@@ -67,10 +72,14 @@ export default function BatchInsights({ onBack }) {
       )}
 
       <div style={{ display: 'flex', gap: 8, marginBottom: 16, background: '#f1f5f9', padding: 5, borderRadius: 14, border: '1px solid #e2e8f0' }}>
-        {[['students', '👥 Students'], ['chapters', '📚 Batch weak chapters'], ['tests', '📈 Test trend']].map(([k, label]) => (
+        {[['students', '👥 Students'], ['chapters', '📚 Batch weak chapters'], ['tests', '📈 Test trend'], ['improved', '🚀 Most improved']].map(([k, label]) => (
           <button key={k} onClick={() => setTab(k)} style={{ flex: 1, padding: '10px 14px', borderRadius: 10, border: 'none', background: tab === k ? '#6366f1' : 'transparent', color: tab === k ? '#fff' : '#475569', fontWeight: 800, fontSize: 14, cursor: 'pointer' }}>{label}</button>
         ))}
       </div>
+
+      {tab === 'improved' && (improved
+        ? <MostImprovedPanel data={improved} adminView onOpenStudent={r => setStudent({ student_id: r.student_id })} />
+        : <Loading text="Ranking improvement…" />)}
 
       {tab === 'students' && (
         <Panel

@@ -66,6 +66,7 @@ class User(Base):
     is_active   : Mapped[bool]     = mapped_column(Boolean, default=True, nullable=False)
     avatar_url  : Mapped[str|None] = mapped_column(String(500), nullable=True)
     target_marks: Mapped[float|None] = mapped_column(Float, nullable=True)  # student's JEE goal, out of 300
+    daily_goal  : Mapped[int]   = mapped_column(Integer, default=10, server_default="10", nullable=False)  # questions to revise per day (streak)
     created_at  : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at  : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -446,6 +447,22 @@ class MistakeItem(Base):
     __table_args__ = (
         UniqueConstraint("student_id", "question_id", name="uq_mistake_student_question"),
         Index("ix_mistake_student_status_due", "student_id", "status", "next_due_at"),
+    )
+
+
+class MistakeReview(Base):
+    """One re-attempt of a notebook item (feeds the daily streak and goal)."""
+    __tablename__ = "mistake_reviews"
+
+    id          : Mapped[str]      = mapped_column(String(36), primary_key=True, default=new_uuid)
+    student_id  : Mapped[str]      = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    item_id     : Mapped[str]      = mapped_column(String(36), ForeignKey("mistake_items.id", ondelete="CASCADE"), nullable=False)
+    question_id : Mapped[str]      = mapped_column(String(36), nullable=False)
+    result      : Mapped[str]      = mapped_column(String(20), nullable=False)      # correct | wrong
+    reviewed_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_mistake_reviews_student_time", "student_id", "reviewed_at"),
     )
 
 

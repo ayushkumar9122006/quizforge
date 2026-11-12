@@ -28,7 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from models.all_models import (
-    Answer, Attempt, AttemptStatus, MistakeItem, PracticeAnswer, PracticeSet,
+    Answer, Attempt, AttemptStatus, MistakeItem, MistakeReview, PracticeAnswer, PracticeSet,
     Question, Quiz, QuizSession, QuizStatus,
 )
 
@@ -131,9 +131,11 @@ async def sync_from_history(db: AsyncSession, student_id: str) -> int:
         select(MistakeItem.question_id).where(MistakeItem.student_id == student_id)
     )).scalars().all())
     quiz_ids = list({a.quiz_id for a in attempts})
+    from crud.session import has_answer_key
     q_by_quiz = defaultdict(list)
-    for qid, quiz_id in (await db.execute(select(Question.id, Question.quiz_id).where(Question.quiz_id.in_(quiz_ids)))).all():
-        q_by_quiz[quiz_id].append(qid)
+    for q in (await db.execute(select(Question).where(Question.quiz_id.in_(quiz_ids)))).scalars().all():
+        if has_answer_key(q):
+            q_by_quiz[q.quiz_id].append(q.id)
     answers = defaultdict(dict)
     for a in (await db.execute(select(Answer).where(Answer.attempt_id.in_([x.id for x in attempts])))).scalars().all():
         answers[a.attempt_id][a.question_id] = a
@@ -237,6 +239,8 @@ async def review_item(db: AsyncSession, student_id: str, item_id: str, selected_
         item.correct_streak = 0
         item.last_result = "wrong"
         item.next_due_at = now + timedelta(days=INTERVALS_DAYS[0])
+    db.add(MistakeReview(student_id=student_id, item_id=item.id, question_id=q.id,
+                         result=item.last_result, reviewed_at=now))
     await db.flush()
     return {
         **ev, **answer_reveal(q),
@@ -287,13 +291,14 @@ async def create_weak_chapter_set(db: AsyncSession, student_id: str) -> dict:
         raise ValueError("Practice unlocks after your first submitted test.")
 
     # questions per chapter from eligible tests
+    from crud.session import has_answer_key
     rows = (await db.execute(
-        select(Question.id, Question.subject, Question.chapter)
-        .where(Question.quiz_id.in_(list(eligible)), Question.chapter.isnot(None))
-    )).all()
+        select(Question).where(Question.quiz_id.in_(list(eligible)), Question.chapter.isnot(None))
+    )).scalars().all()
     pool = defaultdict(list)
-    for qid, subj, ch in rows:
-        pool[ch].append(qid)
+    for q in rows:
+        if has_answer_key(q):  # practice must always be able to show the right answer
+            pool[q.chapter].append(q.id)
 
     # history: what the student already got right
     right = set((await db.execute(
