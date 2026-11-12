@@ -35,6 +35,8 @@ async def create(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    from services.media_service import externalize_question_images
+    await externalize_question_images(data.questions)   # base64 images → Cloudinary URLs (if configured)
     quiz = await create_quiz(db, data, admin.id)
     return await get_quiz(db, quiz.id)
 
@@ -439,6 +441,8 @@ async def import_confirm_questions(
     if not payload.questions:
         raise HTTPException(status_code=400, detail="No questions provided for import")
 
+    from services.media_service import externalize_question_images
+    await externalize_question_images(payload.questions)
     updated_quiz = await add_questions_to_quiz(db, quiz_id, payload.questions)
     return updated_quiz
 

@@ -33,6 +33,7 @@ from models.all_models import (
     Answer, Attempt, AttemptStatus, Question, Quiz, QuizSession, User,
 )
 from services.jee_syllabus import SUBJECTS, infer_subject
+from services.jee_percentile import estimate_percentile, scale_to_300, marks_for_percentile, SOURCE_NOTE
 
 DONE = [AttemptStatus.submitted.value, AttemptStatus.auto_submitted.value]
 UNTAGGED = "Untagged"
@@ -41,6 +42,14 @@ OTHER_SUBJECT = "Other"
 # Trend thresholds (percentage points per test)
 TREND_EPS = 1.5
 RECENT_WINDOW = 3
+
+# Time strategy thresholds (seconds on a single question)
+SLOW_SEC = 240      # "spent over 4 minutes and still got it wrong"
+RUSHED_SEC = 20     # "rushed in under 20 seconds and got it wrong"
+
+# Difficulty from how the batch did (share of test-takers who got it right)
+EASY_P, HARD_P = 0.70, 0.30
+MIN_RATED_COHORT = 5
 
 
 # ── small helpers ─────────────────────────────────────────────────────────────
@@ -233,7 +242,11 @@ def _summarize(att: dict, qs: list[dict], ans_map: dict[str, dict]) -> dict:
         _add(subjects[q["subject_key"]], kind, marks, mm, t)
         _add(chapters[(q["subject_key"], q["chapter_key"])], kind, marks, mm, t)
         _add(qtypes[q["question_type"] or "single_correct"], kind, marks, mm, t)
-        per_question.append({"question_id": q["id"], "kind": kind, "marks": marks, "max": mm})
+        per_question.append({
+            "question_id": q["id"], "kind": kind, "marks": marks, "max": mm, "time": t,
+            "subject": q["subject_key"], "chapter": q["chapter_key"], "number": (q["order_index"] or 0) + 1,
+            "question_type": q["question_type"] or "single_correct",
+        })
 
     tot = _finish(total)
     score = float(att["score"] or 0)
@@ -275,6 +288,7 @@ class Cohorts:
         self.data = data
         self.by_quiz: dict[str, list[dict]] = defaultdict(list)
         self.by_attempt: dict[str, dict] = {}
+        self._difficulty_cache: dict[str, dict] = {}
         for att in data["attempts"]:
             s = _summarize(att, data["questions"].get(att["quiz_id"], []), data["answers"].get(att["id"], {}))
             self.by_quiz[att["quiz_id"]].append(s)
@@ -311,6 +325,31 @@ class Cohorts:
             "subjects": subj,
         }
 
+    def question_difficulty(self, quiz_id: str) -> dict[str, dict]:
+        """Per question: share of the batch that got it right → easy / medium / hard (None if batch too small)."""
+        if quiz_id in self._difficulty_cache:
+            return self._difficulty_cache[quiz_id]
+        cohort = self.by_quiz[quiz_id]
+        seen: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+        for c in cohort:
+            for pq in c["per_question"]:
+                seen[pq["question_id"]][1] += 1
+                if pq["kind"] == "correct":
+                    seen[pq["question_id"]][0] += 1
+        out = {}
+        for qid, (ok, n) in seen.items():
+            p = ok / n if n else 0.0
+            level = None
+            if n >= MIN_RATED_COHORT:
+                level = "easy" if p >= EASY_P else "hard" if p < HARD_P else "medium"
+            out[qid] = {"p": round(p, 3), "level": level, "n": n}
+        self._difficulty_cache[quiz_id] = out
+        return out
+
+    def topper(self, quiz_id: str) -> Optional[dict]:
+        cohort = self.by_quiz[quiz_id]
+        return min(cohort, key=lambda c: (-c["score"], c["time_taken_sec"])) if cohort else None
+
     def chapter_batch_accuracy(self, quiz_id: str) -> dict[tuple[str, str], float]:
         agg: dict[tuple[str, str], list[int]] = defaultdict(lambda: [0, 0])
         for c in self.by_quiz[quiz_id]:
@@ -320,12 +359,122 @@ class Cohorts:
         return {k: _pct(v[0], v[1]) for k, v in agg.items()}
 
 
+def _time_strategy(cohorts: "Cohorts", s: dict) -> dict:
+    """Slow-and-wrong, rushed-and-wrong, and time per subject vs the topper and batch."""
+    slow, rushed, slow_right = [], [], []
+    for pq in s["per_question"]:
+        if pq["kind"] in ("wrong", "partial") and pq["time"] > SLOW_SEC:
+            slow.append(pq)
+        elif pq["kind"] in ("wrong", "partial") and 0 < pq["time"] < RUSHED_SEC:
+            rushed.append(pq)
+        elif pq["kind"] == "correct" and pq["time"] > SLOW_SEC:
+            slow_right.append(pq)
+
+    def item(pq):
+        return {
+            "number": pq["number"], "question_id": pq["question_id"], "subject": pq["subject"],
+            "chapter": pq["chapter"], "time_sec": pq["time"], "kind": pq["kind"],
+            "marks_lost": _r(pq["max"] - pq["marks"], 2),
+        }
+
+    top = cohorts.topper(s["quiz_id"])
+    cohort = cohorts.by_quiz[s["quiz_id"]]
+    subjects = []
+    for name in _subject_order(s["subjects"].keys()):
+        mine = s["subjects"][name]
+        t = top["subjects"].get(name, {}) if top else {}
+        batch_times = [c["subjects"].get(name, {}).get("time_sec", 0) for c in cohort]
+        subjects.append({
+            "subject": name,
+            "my_time_sec": mine["time_sec"],
+            "my_score_pct": mine["score_pct"],
+            "topper_time_sec": t.get("time_sec", 0),
+            "topper_score_pct": t.get("score_pct", 0.0),
+            "batch_avg_time_sec": _r(sum(batch_times) / len(batch_times), 0) if batch_times else 0,
+            "questions": mine["questions"],
+        })
+    return {
+        "slow_threshold_sec": SLOW_SEC,
+        "rushed_threshold_sec": RUSHED_SEC,
+        "slow_wrong": [item(p) for p in sorted(slow, key=lambda p: -p["time"])],
+        "rushed_wrong": [item(p) for p in sorted(rushed, key=lambda p: p["time"])],
+        "slow_correct": len(slow_right),
+        "time_on_slow_wrong_sec": sum(p["time"] for p in slow),
+        "marks_lost_slow_wrong": _r(sum(p["max"] - p["marks"] for p in slow), 2),
+        "marks_lost_rushed_wrong": _r(sum(p["max"] - p["marks"] for p in rushed), 2),
+        "subjects": subjects,
+        "topper_total_time_sec": top["time_taken_sec"] if top else 0,
+        "my_total_time_sec": s["time_taken_sec"],
+    }
+
+
+def _difficulty_breakdown(cohorts: "Cohorts", s: dict) -> dict:
+    diff = cohorts.question_difficulty(s["quiz_id"])
+    buckets = {lvl: _blank_bucket() for lvl in ("easy", "medium", "hard", "unrated")}
+    easy_misses = []
+    for pq in s["per_question"]:
+        d = diff.get(pq["question_id"], {})
+        lvl = d.get("level") or "unrated"
+        _add(buckets[lvl], pq["kind"], pq["marks"], pq["max"], pq["time"])
+        if lvl == "easy" and pq["kind"] != "correct":
+            easy_misses.append({
+                "number": pq["number"], "question_id": pq["question_id"], "subject": pq["subject"],
+                "chapter": pq["chapter"], "kind": pq["kind"], "batch_correct_pct": _r(100 * d["p"], 0),
+                "marks_lost": _r(pq["max"] - pq["marks"], 2),
+            })
+    levels = {k: _finish(v) for k, v in buckets.items()}
+    easy_ps = [100 * diff[m["question_id"]]["p"] for m in easy_misses]
+    return {
+        "levels": levels,
+        "rated": any(v["questions"] for k, v in levels.items() if k != "unrated"),
+        "easy_marks_lost": levels["easy"]["marks_lost"],
+        "easy_misses": sorted(easy_misses, key=lambda m: -m["batch_correct_pct"]),
+        "easy_misses_avg_batch_pct": _r(sum(easy_ps) / len(easy_ps), 0) if easy_ps else None,
+        "thresholds": {"easy_at_least_pct": int(EASY_P * 100), "hard_below_pct": int(HARD_P * 100), "min_cohort": MIN_RATED_COHORT},
+    }
+
+
+def _target_view(target: Optional[float], score: float, total: float, subjects: dict) -> Optional[dict]:
+    """Gap to the student's goal (out of 300), overall and per subject (each subject out of 100)."""
+    s300 = scale_to_300(score, total)
+    est = estimate_percentile(s300) if s300 is not None else None
+    if not target:
+        return {"target_marks": None, "score_300": s300, "estimated_percentile": est, "note": SOURCE_NOTE}
+    per_subject_target = target / 3.0
+    subj = []
+    for name in _subject_order(subjects.keys()):
+        if name == OTHER_SUBJECT:
+            continue
+        b = subjects[name]
+        out_of_100 = _r(100.0 * b["score"] / b["max"], 1) if b["max"] else 0.0
+        subj.append({
+            "subject": name,
+            "score_100": out_of_100,
+            "target_100": _r(per_subject_target, 1),
+            "gap": _r(per_subject_target - out_of_100, 1),
+        })
+    return {
+        "target_marks": target,
+        "target_percentile": estimate_percentile(target),
+        "score_300": s300,
+        "estimated_percentile": est,
+        "gap": _r(target - (s300 or 0), 1),
+        "subjects": subj,
+        "biggest_gap_subject": max(subj, key=lambda x: x["gap"])["subject"] if subj else None,
+        "note": SOURCE_NOTE,
+    }
+
+
 def _subject_order(names: Iterable[str]) -> list[str]:
     order = {s: i for i, s in enumerate(SUBJECTS + [OTHER_SUBJECT])}
     return sorted(names, key=lambda n: (order.get(n, 99), n))
 
 
 # ── attempt report ────────────────────────────────────────────────────────────
+
+async def _target_of(db: AsyncSession, student_id: str) -> Optional[float]:
+    return (await db.execute(select(User.target_marks).where(User.id == student_id))).scalar_one_or_none()
+
 
 async def attempt_report(db: AsyncSession, attempt_id: str) -> Optional[dict]:
     row = (await db.execute(
@@ -379,6 +528,9 @@ async def attempt_report(db: AsyncSession, attempt_id: str) -> Optional[dict]:
         "chapters": chapters,
         "question_types": [{"question_type": k, **v} for k, v in s["question_types"].items()],
         "untagged_questions": sum(c["questions"] for c in chapters if c["chapter"] == UNTAGGED),
+        "time_strategy": _time_strategy(cohorts, s),
+        "difficulty": _difficulty_breakdown(cohorts, s),
+        "target": _target_view(await _target_of(db, s["student_id"]), s["score"], s["total_marks"], s["subjects"]),
     }
 
 
@@ -396,7 +548,7 @@ def _diagnose(c: dict) -> tuple[str, str]:
     return "low_accuracy", "Accuracy is below target. Do one timed mixed practice set from this chapter every week."
 
 
-def _student_view(cohorts: Cohorts, student_id: str) -> dict:
+def _student_view(cohorts: Cohorts, student_id: str, target: Optional[float] = None) -> dict:
     mine = sorted(
         (s for s in cohorts.by_attempt.values() if s["student_id"] == student_id),
         key=lambda s: s["date"] or datetime.min,
@@ -415,6 +567,8 @@ def _student_view(cohorts: Cohorts, student_id: str) -> dict:
             "score_pct": s["score_pct"],
             "accuracy": s["totals"]["accuracy"],
             "negative_marks": s["totals"]["negative"],
+            "score_300": scale_to_300(s["score"], s["total_marks"]),
+            "estimated_jee_percentile": estimate_percentile(scale_to_300(s["score"], s["total_marks"])),
             "rank": st["rank"],
             "participants": st["participants"],
             "percentile": st["percentile"],
@@ -553,8 +707,92 @@ def _student_view(cohorts: Cohorts, student_id: str) -> dict:
         for i, c in enumerate(weak[:5])
     ]
 
+    # ── Time strategy across tests ─────────────────────────────────────────────
+    ts = {"slow_wrong": 0, "rushed_wrong": 0, "marks_lost_slow_wrong": 0.0, "marks_lost_rushed_wrong": 0.0}
+    subj_time = defaultdict(lambda: {"mine": 0, "mine_q": 0, "topper": 0, "topper_q": 0})
+    diff_agg = {lvl: _blank_bucket() for lvl in ("easy", "medium", "hard", "unrated")}
+    easy_lost_by_test = []
+    for s in mine:
+        t = _time_strategy(cohorts, s)
+        ts["slow_wrong"] += len(t["slow_wrong"])
+        ts["rushed_wrong"] += len(t["rushed_wrong"])
+        ts["marks_lost_slow_wrong"] += t["marks_lost_slow_wrong"]
+        ts["marks_lost_rushed_wrong"] += t["marks_lost_rushed_wrong"]
+        for x in t["subjects"]:
+            st_ = subj_time[x["subject"]]
+            st_["mine"] += x["my_time_sec"]
+            st_["topper"] += x["topper_time_sec"]
+            st_["mine_q"] += x["questions"]
+            st_["topper_q"] += x["questions"]
+        d = _difficulty_breakdown(cohorts, s)
+        for lvl, b in d["levels"].items():
+            a = diff_agg[lvl]
+            for f in ("questions", "attempted", "correct", "partial", "wrong", "skipped", "time_sec"):
+                a[f] += b[f]
+            for f in ("score", "max", "negative"):
+                a[f] += b[f]
+        easy_lost_by_test.append({"attempt_id": s["attempt_id"], "easy_marks_lost": d["easy_marks_lost"], "rated": d["rated"]})
+    time_strategy = {
+        **{k: (_r(v, 1) if isinstance(v, float) else v) for k, v in ts.items()},
+        "slow_threshold_sec": SLOW_SEC,
+        "rushed_threshold_sec": RUSHED_SEC,
+        "subjects": [
+            {
+                "subject": k,
+                "my_sec_per_q": _r(v["mine"] / v["mine_q"], 0) if v["mine_q"] else 0,
+                "topper_sec_per_q": _r(v["topper"] / v["topper_q"], 0) if v["topper_q"] else 0,
+            }
+            for k, v in sorted(subj_time.items(), key=lambda kv: _subject_order([kv[0]])[0])
+        ],
+    }
+    difficulty = {
+        "levels": {k: _finish(v) for k, v in diff_agg.items()},
+        "by_test": easy_lost_by_test,
+        "thresholds": {"easy_at_least_pct": int(EASY_P * 100), "hard_below_pct": int(HARD_P * 100), "min_cohort": MIN_RATED_COHORT},
+    }
+    easy_lost = difficulty["levels"]["easy"]["marks_lost"]
+    if easy_lost > 0 and difficulty["levels"]["easy"]["questions"] >= 3:
+        insights.insert(0, {"kind": "easy_mistakes", "text": f"You lost {easy_lost:g} marks on easy questions (ones at least {int(EASY_P * 100)}% of the batch got right). These are the quickest marks to win back: slow down and re-check them."})
+    if ts["rushed_wrong"] >= 3:
+        insights.append({"kind": "rushed", "text": f"{ts['rushed_wrong']} questions answered in under {RUSHED_SEC} s were wrong (−{_r(ts['marks_lost_rushed_wrong'], 1):g} marks). Read the full question before choosing."})
+    if ts["slow_wrong"] >= 3:
+        insights.append({"kind": "slow", "text": f"{ts['slow_wrong']} questions took over {SLOW_SEC // 60} min and were still wrong. Skip and come back if you are stuck after 2–3 min."})
+
+    # ── Target tracker ─────────────────────────────────────────────────────────
+    target_block = None
+    if timeline:
+        last3 = timeline[-3:]
+        avg300 = sum(t["score_300"] or 0 for t in last3) / len(last3)
+        subj_avg = {}
+        for name in subj_names:
+            vals = [t["subjects"][name]["score_pct"] for t in last3 if name in t["subjects"]]
+            if vals and name != OTHER_SUBJECT:
+                subj_avg[name] = sum(vals) / len(vals)
+        target_block = {
+            "target_marks": target,
+            "target_percentile": estimate_percentile(target) if target else None,
+            "last_300": timeline[-1]["score_300"],
+            "best_300": max(t["score_300"] or 0 for t in timeline),
+            "recent_avg_300": _r(avg300, 1),
+            "estimated_percentile_recent": estimate_percentile(avg300),
+            "gap": _r(target - avg300, 1) if target else None,
+            "subjects": [
+                {"subject": k, "recent_avg_100": _r(v, 1), "target_100": _r(target / 3, 1) if target else None,
+                 "gap": _r(target / 3 - v, 1) if target else None}
+                for k, v in subj_avg.items()
+            ],
+            "hints": [{"percentile": p, "marks": marks_for_percentile(p)} for p in (90, 95, 98, 99)],
+            "note": SOURCE_NOTE,
+        }
+        if target and target_block["subjects"]:
+            worst = max(target_block["subjects"], key=lambda x: x["gap"])
+            target_block["biggest_gap_subject"] = worst["subject"]
+
     best = max(timeline, key=lambda t: t["score_pct"]) if timeline else None
     return {
+        "time_strategy": time_strategy,
+        "difficulty": difficulty,
+        "target": target_block,
         "student_id": student_id,
         "tests_taken": len(timeline),
         "summary": {
@@ -583,7 +821,7 @@ async def student_progress(db: AsyncSession, student_id: str) -> dict:
         .where(Attempt.student_id == student_id, Attempt.status.in_(DONE))
     )).scalars().all()
     cohorts = Cohorts(await _load(db, quiz_ids))
-    view = _student_view(cohorts, student_id)
+    view = _student_view(cohorts, student_id, await _target_of(db, student_id))
     user = (await db.execute(select(User.id, User.name, User.email).where(User.id == student_id))).first()
     view["student"] = {"id": user.id, "name": user.name, "email": user.email} if user else {"id": student_id}
     return view

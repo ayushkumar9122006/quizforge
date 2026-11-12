@@ -167,9 +167,11 @@ async def main():
                         p += 0.08 * ti
                     p = max(0.05, min(0.97, p))
                     attempt_p = 0.85 if p > 0.35 else 0.5
-                    entry = {"question_id": q["id"], "selected_option": None, "response_text": None, "time_taken_sec": random.randint(40, 240)}
+                    r_t = random.random()
+                    t_sec = random.randint(6, 18) if r_t < 0.08 else random.randint(250, 420) if r_t < 0.16 else random.randint(40, 200)
+                    entry = {"question_id": q["id"], "selected_option": None, "response_text": None, "time_taken_sec": t_sec}
                     if random.random() < attempt_p:
-                        right = random.random() < p
+                        right = random.random() < (p * 0.5 if t_sec < 20 else p * 0.8 if t_sec > 240 else p)
                         if q["question_type"] == "numerical":
                             entry["response_text"] = q["raw_answer"] if right else str(int(q["raw_answer"]) + 3)
                         else:
