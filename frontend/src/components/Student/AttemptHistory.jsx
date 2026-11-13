@@ -1,5 +1,6 @@
 import { formatDuration } from '../../services/utils.js'
 import { viewSolutionPdf } from '../../services/quizService.js'
+import { downloadResponseSheetPdf } from '../../services/sessionService.js'
 
 function formatIST(dateStr) {
   if (!dateStr) return 'N/A'
@@ -19,7 +20,7 @@ function formatIST(dateStr) {
   }
 }
 
-export default function AttemptHistory({ attempts = [], onDelete, onView, onBack }) {
+export default function AttemptHistory({ attempts = [], onView, onBack }) {
   // Sort attempts by most recent submission date descending
   const sortedAttempts = [...attempts].sort((a, b) => {
     const timeA = new Date(a.date || a.submitted_at || 0).getTime()
@@ -137,22 +138,27 @@ export default function AttemptHistory({ attempts = [], onDelete, onView, onBack
                   </button>
                 )}
                 <button
+                  className="btn-sec"
+                  style={{ fontSize: 12, padding: '7px 12px', color: '#4338ca', borderColor: '#c7d2fe', background: '#eef2ff', fontWeight: 800, display: 'flex', alignItems: 'center', gap: 5 }}
+                  onClick={async () => {
+                    try {
+                      await downloadResponseSheetPdf(a.id, a.quizTitle || a.quiz_title)
+                    } catch (err) {
+                      alert(err.response?.data?.detail || 'Failed to download response sheet PDF.')
+                    }
+                  }}
+                  title="Download your official response sheet PDF"
+                >
+                  <span>📥</span>
+                  <span>Response Sheet</span>
+                </button>
+                <button
                   className="btn-pri"
                   style={{ fontSize: 13, padding: '7px 16px', fontWeight: 800 }}
                   onClick={() => onView(a)}
                 >
                   View Result →
                 </button>
-                {onDelete && (
-                  <button
-                    className="btn-danger"
-                    style={{ fontSize: 12, padding: '7px 10px', opacity: 0.8 }}
-                    onClick={() => onDelete(a.id)}
-                    title="Remove from local view"
-                  >
-                    ✕
-                  </button>
-                )}
               </div>
             </div>
           )

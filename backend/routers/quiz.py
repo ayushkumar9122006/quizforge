@@ -221,8 +221,7 @@ async def start_quiz_attempt(
 
     # Calculate test duration and deadline clamping
     # T_effective = min(T_quiz, T_window remaining)
-    total_q = len(quiz.questions) or 1
-    base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
+    base_duration_sec = int(round(quiz.effective_total_duration_minutes * 60))
 
     started_at_utc = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
     deadline_duration = started_at_utc + timedelta(seconds=base_duration_sec)

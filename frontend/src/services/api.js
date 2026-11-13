@@ -30,14 +30,35 @@ function processQueue(error, token = null) {
   failedQueue = []
 }
 
+function isQuizActive() {
+  try {
+    return sessionStorage.getItem('quizee_active_quiz') === 'true'
+  } catch {
+    return false
+  }
+}
+
+function handleAuthFailure(error) {
+  if (isQuizActive()) {
+    // CRITICAL DATA INTEGRITY SAFEGUARD:
+    // During an active quiz, DO NOT force logout or wipe localStorage/user state!
+    // Dispatch auth:session-expired so an in-place modal allows re-authentication
+    // and safe submission of preserved answers.
+    window.dispatchEvent(new CustomEvent('auth:session-expired', { detail: { error } }))
+  } else {
+    forceLogout()
+  }
+}
+
 api.interceptors.response.use(
   res => res,
   async err => {
     const original = err.config
 
-    // Only handle 401 that isn't already a retry or a login/refresh request
+    // Only handle 401 that isn't already a retry or an auth endpoint
     if (
       err.response?.status === 401 &&
+      original &&
       !original._retry &&
       !original.url?.includes('/auth/login') &&
       !original.url?.includes('/auth/refresh')
@@ -46,6 +67,8 @@ api.interceptors.response.use(
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject })
         }).then(token => {
+          original._retry = true
+          original.headers = original.headers || {}
           original.headers['Authorization'] = `Bearer ${token}`
           return api(original)
         })
@@ -57,7 +80,7 @@ api.interceptors.response.use(
       const refreshToken = localStorage.getItem('refresh_token')
       if (!refreshToken) {
         isRefreshing = false
-        forceLogout()
+        handleAuthFailure(err)
         return Promise.reject(err)
       }
 
@@ -69,11 +92,12 @@ api.interceptors.response.use(
         localStorage.setItem('refresh_token', data.refresh_token)
         api.defaults.headers['Authorization'] = `Bearer ${data.access_token}`
         processQueue(null, data.access_token)
+        original.headers = original.headers || {}
         original.headers['Authorization'] = `Bearer ${data.access_token}`
         return api(original)
       } catch (refreshErr) {
         processQueue(refreshErr, null)
-        forceLogout()
+        handleAuthFailure(refreshErr)
         return Promise.reject(refreshErr)
       } finally {
         isRefreshing = false

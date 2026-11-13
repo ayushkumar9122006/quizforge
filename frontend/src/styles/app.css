@@ -15,12 +15,13 @@ body{margin:0;background:#f4f6fb;}
 .ocr-ov.open{opacity:1;pointer-events:auto;}
 .ocr-panel{position:fixed;top:0;right:0;height:100dvh;width:400px;background:#fff;box-shadow:-6px 0 40px rgba(0,0,0,.16);z-index:8000;transform:translateX(100%);transition:transform .28s cubic-bezier(.4,0,.2,1);display:flex;flex-direction:column;overflow:hidden;}
 .ocr-panel.open{transform:translateX(0);}
-.opt{display:flex;align-items:center;gap:10px;padding:9px 13px;border-radius:10px;cursor:pointer;border:2px solid #e5e7eb;background:#fff;font-size:14px;color:#111827;width:100%;text-align:left;transition:border-color .12s,background .12s,box-shadow .12s,transform .08s;}
+.opt{display:flex;align-items:center;gap:12px;padding:11px 16px;border-radius:12px;cursor:pointer;border:2px solid #e5e7eb;background:#fff;font-size:16.5px;color:#0f172a;width:100%;text-align:left;transition:border-color .12s,background .12s,box-shadow .12s,transform .08s;min-height:50px;}
 .opt:hover{border-color:#6366f1;background:#f5f3ff;transform:translateX(2px);}
 .opt.sel{border-color:#6366f1;background:linear-gradient(135deg,#ede9fe,#e0e7ff);box-shadow:0 0 0 3px rgba(99,102,241,.15);}
-.obadge{min-width:28px;height:28px;border-radius:50%;border:2px solid #d1d5db;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;transition:all .12s;flex-shrink:0;color:#6b7280;}
+.obadge{min-width:32px;height:32px;border-radius:50%;border:2px solid #d1d5db;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;transition:all .12s;flex-shrink:0;color:#6b7280;}
 .sel .obadge{background:#6366f1;color:#fff;border-color:#6366f1;}
-.sel .olabel{color:#4338ca;font-weight:600;}
+.olabel{font-size:16.5px;line-height:1.5;color:#1e293b;}
+.sel .olabel{color:#312e81;font-weight:700;}
 .diag-zone{border:2px dashed #c4b5fd;border-radius:12px;background:#faf5ff;transition:all .18s;cursor:pointer;position:relative;}
 .diag-zone:hover,.diag-zone.drag{border-color:#6366f1;background:#f0ebff;}
 .diag-zone.has-img{border-style:solid;border-color:#6366f1;background:#f5f3ff;}

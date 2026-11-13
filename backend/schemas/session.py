@@ -41,6 +41,7 @@ class AttemptSubmit(BaseModel):
 
 class LeaderboardEntryOut(BaseModel):
     rank: int
+    student_id: Optional[str] = None
     student_name: str
     score: float
     total_marks: float
@@ -85,6 +86,7 @@ class AnswerResultOut(BaseModel):
     response_text: Optional[str] = None
     marked_for_review: bool = False
     correct_answer: Optional[int] = None
+    raw_answer: Optional[str] = None
     is_correct: bool
     marks_awarded: float
 

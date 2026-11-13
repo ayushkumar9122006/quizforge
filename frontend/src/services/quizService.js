@@ -62,7 +62,23 @@ export async function viewSolutionPdf(quizId) {
 }
 
 // Convert frontend quiz format → backend API format
-export function toApiFormat(frontendQuiz, timePerQMin = 5) {
+export function toApiFormat(frontendQuiz, totalDurationMin = null, fallbackTimePerQMin = 5) {
+  const numQuestions = (frontendQuiz.questions || []).length || 1
+  let totMin = totalDurationMin !== null
+    ? totalDurationMin
+    : (frontendQuiz.total_duration_minutes ?? frontendQuiz.totalDurationMin ?? null)
+
+  let timePerQSec = 300
+  if (totMin !== null && totMin !== undefined && !isNaN(Number(totMin))) {
+    totMin = Number(Number(totMin).toFixed(2))
+    const perQMin = Number((totMin / numQuestions).toFixed(2))
+    timePerQSec = Math.round(perQMin * 60)
+  } else {
+    const perQMin = Number(Number(fallbackTimePerQMin || 5).toFixed(2))
+    timePerQSec = Math.round(perQMin * 60)
+    totMin = Number((perQMin * numQuestions).toFixed(2))
+  }
+
   return {
     title:             frontendQuiz.title || 'Untitled Quiz',
     description:       frontendQuiz.description || null,
@@ -71,14 +87,20 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
     solution_pdf_name: frontendQuiz.solution_pdf_name || null,
     availability_start: frontendQuiz.availability_start || null,
     availability_end:   frontendQuiz.availability_end || null,
-    time_per_q_sec:    (timePerQMin || 5) * 60,
+    total_duration_minutes: totMin !== null && !isNaN(totMin) ? Number(Number(totMin).toFixed(2)) : null,
+    time_per_q_sec:    timePerQSec,
     is_public:         false,
     tags:              Array.isArray(frontendQuiz.tags) ? frontendQuiz.tags : (typeof frontendQuiz.tags === 'string' && frontendQuiz.tags.trim() ? frontendQuiz.tags.split(',').map(t => t.trim()) : null),
     subject:           frontendQuiz.subject || null,
     difficulty:        frontendQuiz.difficulty || null,
     questions: (frontendQuiz.questions || []).map((q, i) => {
-      const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : (q.marks !== undefined ? Number(q.marks) : 1)
-      const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      const isNum = (q.question_type === 'numerical')
+      const pos = q.positive_marks !== undefined && q.positive_marks !== null
+        ? Number(q.positive_marks)
+        : (q.marks !== undefined && q.marks !== null ? Number(q.marks) : (isNum ? 4 : 1))
+      const neg = q.negative_marks !== undefined && q.negative_marks !== null
+        ? Number(q.negative_marks)
+        : (isNum ? 1 : 0)
       const qImg = q.question_image || q.qImage || null
       const corr = q.correct_answer !== undefined ? q.correct_answer : (q.correct ?? null)
       return {
@@ -88,7 +110,7 @@ export function toApiFormat(frontendQuiz, timePerQMin = 5) {
         question_image: qImg,
         content_type:   qImg ? (q.text ? 'both' : 'image') : 'text',
         correct_answer: corr,
-        raw_answer:     q.raw_answer || null,
+        raw_answer:     q.raw_answer || (Array.isArray(q.correct_options) ? q.correct_options.join(', ') : null),
         question_type:  q.question_type || 'single_correct',
         match_data:     q.match_data || null,
         explanation:    q.explanation || (q.source_page ? `PDF Page ${q.source_page}` : null),
@@ -218,8 +240,9 @@ export async function analyzePdfForImport(file, { defaultPosMarks = 4, defaultNe
 export async function confirmBulkImport(quizId, questions) {
   const payload = {
     questions: questions.map((q, i) => {
-      const pos = q.positive_marks !== undefined ? Number(q.positive_marks) : 4
-      const neg = q.negative_marks !== undefined ? Number(q.negative_marks) : 0
+      const isNum = (q.question_type === 'numerical')
+      const pos = q.positive_marks !== undefined && q.positive_marks !== null ? Number(q.positive_marks) : 4
+      const neg = q.negative_marks !== undefined && q.negative_marks !== null ? Number(q.negative_marks) : (isNum ? 1 : 0)
       return {
         order_index: i,
         section: q.section || 'General',

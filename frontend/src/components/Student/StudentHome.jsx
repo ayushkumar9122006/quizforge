@@ -26,7 +26,9 @@ export default function StudentHome({
   onLogout,
   attempts = [],
   histCount = 0,
-  onViewAttempt
+  onViewAttempt,
+  unreadCount = 0,
+  onOpenNotices
 }) {
   const { quizzes, loading, error, reload } = usePublishedQuizzes()
 
@@ -104,12 +106,60 @@ export default function StudentHome({
           <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>Welcome back, <strong style={{ color: '#111827' }}>{user?.name}</strong>!</p>
         </div>
         <div style={{ display: 'flex', gap: 9 }}>
+          <button className="btn-sec" onClick={onOpenNotices} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            📢 Notices {unreadCount > 0 && <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 10, padding: '1px 6px' }}>{unreadCount}</span>}
+          </button>
           <button className="btn-sec" onClick={onHistory}>
             🗂 My Test History ({histCount || attempts.length})
           </button>
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
         </div>
       </div>
+
+      {/* Notice Alert Banner (if unread notices exist) */}
+      {unreadCount > 0 && (
+        <div
+          id="student-home-notice-banner"
+          onClick={onOpenNotices}
+          style={{
+            marginBottom: 20,
+            padding: '12px 18px',
+            background: 'linear-gradient(135deg, #eef2ff, #ede9fe)',
+            border: '1.5px solid #c7d2fe',
+            borderRadius: 16,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            cursor: 'pointer',
+            boxShadow: '0 2px 10px rgba(99, 102, 241, 0.08)',
+            transition: 'transform 0.15s ease'
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: '#6366f1', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>
+              🔔
+            </div>
+            <div>
+              <strong style={{ color: '#312e81', fontSize: 14 }}>
+                {unreadCount === 1 ? '1 new announcement available' : `${unreadCount} new announcements available`}
+              </strong>
+              <p style={{ margin: 0, fontSize: 12.5, color: '#4f46e5' }}>
+                Click to open Notice Board and view important updates
+              </p>
+            </div>
+          </div>
+          <span style={{
+            fontSize: 12,
+            fontWeight: 800,
+            background: '#6366f1',
+            color: '#fff',
+            padding: '5px 12px',
+            borderRadius: 20
+          }}>
+            View Notices →
+          </span>
+        </div>
+      )}
 
       {loading && (
         <div style={{ textAlign: 'center', color: '#9ca3af', padding: '3rem' }}>
@@ -135,7 +185,9 @@ export default function StudentHome({
       <div style={{ display: 'grid', gap: 14 }}>
         {quizzes.map(quiz => {
           const totalQ = quiz.questions?.length || 0
-          const mins = Math.round(totalQ * ((quiz.time_per_q_sec || quiz.timePerQ || 300) / 60))
+          const mins = quiz.total_duration_minutes != null
+            ? Number(quiz.total_duration_minutes).toFixed(2)
+            : String(Math.round(totalQ * ((quiz.time_per_q_sec || quiz.timePerQ || 300) / 60)))
           const secs = [...new Set((quiz.questions || []).map(q => q.section || 'General'))]
           const availability = getQuizAvailability(quiz)
 
@@ -186,7 +238,7 @@ export default function StudentHome({
 
                   <div style={{ fontSize: 12, color: '#64748b', display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
                     <span>📝 {totalQ} questions</span>
-                    <span>⏱ ~{mins} mins duration</span>
+                    <span>⏱ {quiz.total_duration_minutes != null ? `${mins} mins total` : `~${mins} mins duration`}</span>
                     <span style={{ color: '#4f46e5', fontWeight: 600 }}>{availability.detail}</span>
                   </div>
 

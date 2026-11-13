@@ -4,13 +4,29 @@ import { analyzePdfForImport } from '../../../services/quizService.js'
 export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quizId = null }) {
   const [file, setFile] = useState(null)
   const [quizTitle, setQuizTitle] = useState('')
-  const [timePerQ, setTimePerQ] = useState(5)
+  const [totalDuration, setTotalDuration] = useState('60.00')
   const [posMarks, setPosMarks] = useState(4)
   const [negMarks, setNegMarks] = useState(1)
   const [sections, setSections] = useState(['Section A', 'Section B', 'Section C', 'Section D'])
   const [newSecInput, setNewSecInput] = useState('')
   const [instructions, setInstructions] = useState(
-    '• Read each question carefully before choosing an answer.\n• Marking scheme and question types are set based on the examination paper.\n• Clear Response button is available to deselect any answer.\n• Test will auto-submit when the overall timer expires.'
+    'Please read each question carefully before answering.\n\n' +
+    '• Single Correct MCQ:\n' +
+    '  Select exactly ONE option.\n\n' +
+    '• Multi-Correct MCQ:\n' +
+    '  Select ALL options that you believe are correct.\n' +
+    '  Selecting even ONE incorrect option will result in -1 mark for the question.\n' +
+    '  If you select only correct options, partial marks may be awarded according to the proportion of correct options selected.\n' +
+    '  Leaving the question unanswered gives 0 marks.\n\n' +
+    '• Numerical Answer:\n' +
+    '  Enter only the numerical value.\n' +
+    '  You may enter an integer or a decimal value with up to 2 decimal places.\n' +
+    '  Values with more than 2 decimal places are not allowed.\n' +
+    '  You may enter fewer than 2 decimal places.\n' +
+    '  Do not enter units or other text.\n\n' +
+    '• Match the Column:\n' +
+    '  Match the items according to the instructions given in the question.\n\n' +
+    '• Check your answers carefully before submitting the test.'
   )
   const [enableWindow, setEnableWindow] = useState(false)
   const [availStart, setAvailStart] = useState('')
@@ -28,7 +44,7 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
     if (!open) {
       setFile(null)
       setQuizTitle('')
-      setTimePerQ(5)
+      setTotalDuration('60.00')
       setSolutionPdf(null)
       setSolutionPdfName('')
       setError('')
@@ -145,6 +161,17 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       return
     }
 
+    const parsedDur = parseFloat(totalDuration)
+    if (isNaN(parsedDur) || parsedDur <= 0) {
+      setError('Please enter a valid Total Quiz Duration greater than 0.')
+      return
+    }
+    const parts = String(totalDuration).split('.')
+    if (parts.length > 1 && parts[1].length > 2) {
+      setError('Total Quiz Duration cannot have more than 2 decimal places.')
+      return
+    }
+
     setError('')
     setAnalyzing(true)
 
@@ -171,11 +198,14 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
       })
       clearInterval(interval)
       setAnalyzing(false)
+      const qCount = data?.total_questions || data?.questions?.length || 10
+      const perQMin = Number((parsedDur / qCount).toFixed(2))
       onAnalysisComplete({
         ...data,
         title: quizTitle.trim() || (file ? file.name.replace(/\.pdf$/i, '').replace(/_/g, ' ') : 'Imported Quiz'),
-        timePerQMin: Number(timePerQ) || 5,
-        timePerQ: (Number(timePerQ) || 5) * 60,
+        totalDurationMinutes: Number(Number(parsedDur).toFixed(2)),
+        timePerQMin: perQMin,
+        timePerQ: Math.round(perQMin * 60),
         solutionPdf,
         solutionPdfName,
         configuredSections: sections,
@@ -302,16 +332,17 @@ export default function PdfUploadModal({ open, onClose, onAnalysisComplete, quiz
           </div>
           <div>
             <label style={{ fontSize: 12, fontWeight: 700, color: '#374151', display: 'block', marginBottom: 4 }}>
-              Minutes / Question
+              Total Quiz Duration (minutes)
             </label>
             <input
               type="number"
-              min="1"
-              max="60"
+              min="0.01"
+              step="0.01"
               className="inp"
-              value={timePerQ}
-              onChange={(e) => setTimePerQ(Math.max(1, parseInt(e.target.value) || 1))}
+              value={totalDuration}
+              onChange={(e) => setTotalDuration(e.target.value)}
               disabled={analyzing}
+              placeholder="e.g. 60.00"
               style={{ width: '100%' }}
             />
           </div>

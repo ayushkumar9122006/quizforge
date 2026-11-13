@@ -45,3 +45,23 @@ export async function getMyAttempts() {
   const { data } = await api.get('/sessions/attempts/my')
   return data
 }
+
+export async function downloadResponseSheetPdf(attemptId, quizTitle = 'quiz') {
+  const response = await api.get(`/sessions/attempts/${attemptId}/response-sheet-pdf`, {
+    responseType: 'blob',
+  })
+  const blob = new Blob([response.data], { type: 'application/pdf' })
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  const safeTitle = (quizTitle || 'quiz').replace(/[^a-zA-Z0-9_\-]/g, '_').slice(0, 30)
+  a.download = `response_sheet_${safeTitle}_${(attemptId || '').slice(0, 8)}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  setTimeout(() => {
+    window.URL.revokeObjectURL(url)
+    if (a.parentNode) {
+      a.parentNode.removeChild(a)
+    }
+  }, 100)
+}

@@ -1,6 +1,7 @@
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.orm import selectinload
+from sqlalchemy.exc import IntegrityError
 from models.all_models import (
     QuizSession, Attempt, Answer, LeaderboardEntry,
     SessionStatus, AttemptStatus, Question
@@ -8,8 +9,12 @@ from models.all_models import (
 from schemas.session import AttemptSubmit
 from datetime import datetime
 from typing import Optional, List
+import asyncio
 import random
 import string
+import json
+import math
+import re
 
 
 def generate_room_code() -> str:
@@ -112,7 +117,10 @@ async def submit_attempt(
     questions: List[Question],
     auto: bool = False,
 ) -> tuple[Attempt, list[dict]]:
-    result = await db.execute(select(Attempt).where(Attempt.id == attempt_id))
+    # 1. Lock the attempt row with SELECT ... FOR UPDATE to serialize concurrent submissions
+    result = await db.execute(
+        select(Attempt).where(Attempt.id == attempt_id).with_for_update()
+    )
     attempt = result.scalar_one_or_none()
     if not attempt:
         raise ValueError("Attempt not found")
@@ -129,16 +137,21 @@ async def submit_attempt(
         for a in existing.scalars().all():
             q = q_lookup.get(a.question_id)
             existing_results.append({
-                "question_id":     a.question_id,
-                "selected_option": a.selected_option,
-                "correct_answer":  q.correct_answer if q else None,
-                "is_correct":      a.is_correct,
-                "marks_awarded":   a.marks_awarded,
+                "question_id":       a.question_id,
+                "selected_option":   a.selected_option,
+                "response_text":     getattr(a, "response_text", None),
+                "marked_for_review": getattr(a, "marked_for_review", False),
+                "correct_answer":    q.correct_answer if q else None,
+                "is_correct":        a.is_correct,
+                "marks_awarded":     a.marks_awarded,
             })
         return attempt, existing_results
 
     # Build question lookup
     q_map = {q.id: q for q in questions}
+
+    # Atomically clear any existing Answer rows for this attempt before inserting
+    await db.execute(delete(Answer).where(Answer.attempt_id == attempt_id))
 
     score = 0.0
     total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
@@ -155,29 +168,144 @@ async def submit_attempt(
             continue
         pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
         neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+        q_type = getattr(q, "question_type", "single_correct") or "single_correct"
 
         is_marked = bool(getattr(ans_data, "marked_for_review", False))
         if is_marked:
             marked_count += 1
 
-        is_answered = (ans_data.selected_option is not None) or (
-            getattr(ans_data, "response_text", None) is not None and str(ans_data.response_text).strip() != ""
-        )
+        resp_text = getattr(ans_data, "response_text", None)
+        sel_opt = getattr(ans_data, "selected_option", None)
 
-        if not is_answered:
-            is_correct = False
-            marks_awarded = 0.0
-            skipped_count += 1
-        elif ans_data.selected_option == q.correct_answer:
-            is_correct = True
-            marks_awarded = pos
-            correct_count += 1
-            attempted_count += 1
+        if q_type == "numerical":
+            is_answered = (resp_text is not None and str(resp_text).strip() != "")
+            if not is_answered:
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                val_str = str(resp_text).strip()
+                # Enforce input restriction: at most 2 digits after decimal
+                dec_match = re.search(r"\.(\d+)", val_str)
+                has_excess_decimals = bool(dec_match and len(dec_match.group(1)) > 2)
+                student_val = None
+                if not has_excess_decimals:
+                    try:
+                        student_val = float(val_str)
+                    except ValueError:
+                        student_val = None
+
+                if student_val is None:
+                    # Invalid numeric format or > 2 decimal places
+                    is_correct = False
+                    marks_awarded = -neg
+                    incorrect_count += 1
+                else:
+                    correct_val = None
+                    if q.raw_answer:
+                        m = re.search(r"[-+]?\d+(?:\.\d+)?", str(q.raw_answer))
+                        if m:
+                            try:
+                                correct_val = float(m.group(0))
+                            except ValueError:
+                                pass
+                    if correct_val is not None and abs(student_val - correct_val) <= 0.01 + 1e-7:
+                        is_correct = True
+                        marks_awarded = pos
+                        correct_count += 1
+                    else:
+                        is_correct = False
+                        marks_awarded = -neg
+                        incorrect_count += 1
+
+        elif q_type == "multi_correct":
+            selected_set = set()
+            if resp_text is not None and str(resp_text).strip() != "":
+                try:
+                    parsed = json.loads(resp_text)
+                    if isinstance(parsed, list):
+                        for x in parsed:
+                            if isinstance(x, int):
+                                selected_set.add(x)
+                            elif isinstance(x, str) and x.strip().isdigit():
+                                selected_set.add(int(x.strip()))
+                            elif isinstance(x, str) and len(x.strip()) == 1 and x.strip().upper() in "ABCDEF":
+                                selected_set.add(ord(x.strip().upper()) - ord('A'))
+                except Exception:
+                    tokens = re.findall(r"\b([A-Fa-f0-9])\b", str(resp_text))
+                    for t in tokens:
+                        if t.isdigit():
+                            selected_set.add(int(t))
+                        else:
+                            selected_set.add(ord(t.upper()) - ord('A'))
+            if sel_opt is not None:
+                selected_set.add(sel_opt)
+
+            if len(selected_set) == 0:
+                # RULE 3 — NO ANSWER: score = 0
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                correct_set = set()
+                if q.raw_answer:
+                    letters = re.findall(r"\b([A-Fa-f0-9])\b", str(q.raw_answer))
+                    for l in letters:
+                        if l.isdigit():
+                            correct_set.add(int(l))
+                        else:
+                            correct_set.add(ord(l.upper()) - ord('A'))
+                if not correct_set and q.correct_answer is not None:
+                    correct_set.add(q.correct_answer)
+
+                incorrect_selected = selected_set - correct_set
+                correct_selected = selected_set & correct_set
+
+                # RULE 1 — ANY WRONG OPTION SELECTED
+                if len(incorrect_selected) > 0:
+                    penalty = neg if neg > 0 else 1.0
+                    is_correct = False
+                    marks_awarded = -penalty
+                    incorrect_count += 1
+                else:
+                    # RULE 2 — ONLY CORRECT OPTIONS SELECTED
+                    tot_corr = len(correct_set) if len(correct_set) > 0 else 1
+                    int_score = math.floor(pos * len(correct_selected) / tot_corr)
+                    marks_awarded = float(int_score)
+                    is_correct = (selected_set == correct_set)
+                    if is_correct:
+                        correct_count += 1
+
         else:
-            is_correct = False
-            marks_awarded = -neg
-            incorrect_count += 1
-            attempted_count += 1
+            # Single Correct, Match the Column, Assertion-Reason
+            is_answered = (sel_opt is not None) or (resp_text is not None and str(resp_text).strip() != "")
+            if not is_answered:
+                is_correct = False
+                marks_awarded = 0.0
+                skipped_count += 1
+            else:
+                attempted_count += 1
+                user_idx = sel_opt
+                if user_idx is None and resp_text is not None:
+                    if str(resp_text).strip().isdigit():
+                        user_idx = int(str(resp_text).strip())
+                    elif len(str(resp_text).strip()) == 1 and str(resp_text).strip().upper() in "ABCDEF":
+                        user_idx = ord(str(resp_text).strip().upper()) - ord('A')
+
+                corr_idx = q.correct_answer
+                if corr_idx is None and q.raw_answer and len(str(q.raw_answer).strip()) == 1 and str(q.raw_answer).strip().upper() in "ABCDEF":
+                    corr_idx = ord(str(q.raw_answer).strip().upper()) - ord('A')
+
+                if user_idx is not None and corr_idx is not None and user_idx == corr_idx:
+                    is_correct = True
+                    marks_awarded = pos
+                    correct_count += 1
+                else:
+                    is_correct = False
+                    marks_awarded = -neg
+                    incorrect_count += 1
 
         score += marks_awarded
 
@@ -199,6 +327,7 @@ async def submit_attempt(
             "response_text":     getattr(ans_data, "response_text", None),
             "marked_for_review": is_marked,
             "correct_answer":    q.correct_answer,
+            "raw_answer":        q.raw_answer,
             "is_correct":        is_correct,
             "marks_awarded":     marks_awarded,
         })
@@ -215,7 +344,39 @@ async def submit_attempt(
     attempt.status = AttemptStatus.auto_submitted if auto else AttemptStatus.submitted
     attempt.submitted_at = datetime.utcnow()
     attempt.time_taken_sec = submission.time_taken_sec
-    await db.flush()
+    try:
+        await db.flush()
+    except IntegrityError:
+        # Concurrent submit race resolved by database unique constraint:
+        # Re-query the committed attempt and return its existing results idempotently
+        await db.rollback()
+        existing_att = None
+        for _ in range(20):
+            await asyncio.sleep(0.05)
+            await db.rollback()
+            db.expire_all()
+            existing_att = (await db.execute(select(Attempt).where(Attempt.id == attempt_id))).scalar_one_or_none()
+            if existing_att and existing_att.status != AttemptStatus.in_progress:
+                break
+        if existing_att:
+            q_lookup = {q.id: q for q in questions}
+            existing = await db.execute(
+                select(Answer).where(Answer.attempt_id == attempt_id)
+            )
+            existing_results = []
+            for a in existing.scalars().all():
+                q = q_lookup.get(a.question_id)
+                existing_results.append({
+                    "question_id":       a.question_id,
+                    "selected_option":   a.selected_option,
+                    "response_text":     getattr(a, "response_text", None),
+                    "marked_for_review": getattr(a, "marked_for_review", False),
+                    "correct_answer":    q.correct_answer if q else None,
+                    "is_correct":        a.is_correct,
+                    "marks_awarded":     a.marks_awarded,
+                })
+            return existing_att, existing_results
+        raise
 
     # Update leaderboard
     existing_lb = await db.execute(
@@ -254,6 +415,7 @@ async def submit_attempt(
 
     # Recompute all ranks for this session with deterministic tie breaking
     await _recompute_ranks(db, attempt.session_id)
+    await db.commit()
     return attempt, answer_results
 
 
@@ -295,6 +457,17 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
             deadline = min(deadline, end_tz)
 
         if now >= deadline:
+            saved_answers = att.answers or []
+            if not saved_answers:
+                # SAFETY: If no answers were ever saved to the database, do not immediately
+                # auto-submit with answers=[] within a 30-minute grace window of the deadline.
+                # This protects students whose submit failed due to token expiration or network drop,
+                # allowing them to log back in and submit the answers preserved in their browser.
+                # Only if the attempt is expired by more than 30 minutes (abandoned attempt)
+                # do we finalize it.
+                if now < deadline + timedelta(minutes=30):
+                    continue
+
             sub = AttemptSubmit(
                 answers=[
                     AnswerSubmit(
@@ -304,7 +477,7 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
                         response_text=a.response_text,
                         time_taken_sec=a.time_taken_sec or 0,
                     )
-                    for a in (att.answers or [])
+                    for a in saved_answers
                 ],
                 time_taken_sec=min(int((now - started_at).total_seconds()), int((deadline - started_at).total_seconds())),
             )
@@ -347,7 +520,8 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             q = q_map.get(ans.question_id)
             if q:
                 idx = q.order_index
-                answers_dict[idx] = ans.selected_option
+                user_val = ans.response_text if (ans.response_text is not None and ans.response_text != "") else ans.selected_option
+                answers_dict[idx] = user_val
                 question_times_dict[idx] = ans.time_taken_sec
 
         sections = sorted(list(set(q.section or "General" for q in questions)))
@@ -375,6 +549,7 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             user_ans_obj = next((a for a in (att.answers or []) if a.question_id == q.id), None)
             pos_m = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
             neg_m = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+            user_ans_val = (user_ans_obj.response_text if (user_ans_obj and user_ans_obj.response_text is not None and user_ans_obj.response_text != "") else (user_ans_obj.selected_option if user_ans_obj else None))
             resolved_questions.append({
                 "id": q.id,
                 "text": q.text,
@@ -382,13 +557,15 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
                 "section": q.section,
                 "correct": q.correct_answer,
                 "correct_answer": q.correct_answer,
+                "raw_answer": q.raw_answer,
+                "question_type": q.question_type or "single_correct",
                 "explanation": q.explanation,
                 "marks": pos_m,
                 "positive_marks": pos_m,
                 "negative_marks": neg_m,
                 "diagram": q.diagram,
                 "isCorrect": user_ans_obj.is_correct if user_ans_obj else False,
-                "userAnswer": user_ans_obj.selected_option if user_ans_obj else None,
+                "userAnswer": user_ans_val,
                 "marked_for_review": user_ans_obj.marked_for_review if user_ans_obj else False,
                 "response_text": user_ans_obj.response_text if user_ans_obj else None,
                 "marksAwarded": user_ans_obj.marks_awarded if user_ans_obj else 0.0,

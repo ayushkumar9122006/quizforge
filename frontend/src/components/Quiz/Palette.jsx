@@ -7,7 +7,14 @@ export default function Palette({ questions, answers, marked, current, onJump, o
     return () => { document.body.style.overflow = p }
   }, [])
 
-  const done = Object.keys(answers).length
+  const isAns = (q, ans) => {
+    if (ans === undefined || ans === null) return false
+    if (q.question_type === 'numerical') return typeof ans === 'string' ? ans.trim() !== '' : true
+    if (q.question_type === 'multi_correct') return Array.isArray(ans) ? ans.length > 0 : Boolean(ans)
+    return true
+  }
+
+  const done = questions.filter((q, i) => isAns(q, answers[i])).length
 
   // Group questions by section with both local and global indices
   const sectionsMap = {}
@@ -24,7 +31,7 @@ export default function Palette({ questions, answers, marked, current, onJump, o
   })
 
   const sectionsList = Object.entries(sectionsMap).map(([name, qs]) => {
-    const answeredCount = qs.filter(q => answers[q.globalIndex] !== undefined).length
+    const answeredCount = qs.filter(q => isAns(q, answers[q.globalIndex])).length
     const remainingCount = qs.length - answeredCount
     const markedCount = qs.filter(q => marked.has(q.globalIndex)).length
     return {
@@ -118,7 +125,7 @@ export default function Palette({ questions, answers, marked, current, onJump, o
               {/* Local Question Number Buttons [1] [2] ... [N] */}
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8 }}>
                 {sec.questions.map((q) => {
-                  const a = answers[q.globalIndex] !== undefined
+                  const a = isAns(q, answers[q.globalIndex])
                   const m = marked.has(q.globalIndex)
                   const c = q.globalIndex === current
                   let cls = 'pb'
