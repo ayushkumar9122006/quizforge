@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased] — PDF import for typeset JEE papers
+
+### Added
+- **Layout-aware PDF importer** (`services/pdf_layout_parser.py`) for papers made with KaTeX / MathJax / LaTeX maths (e.g. "Q1. … (a)…(d) … Correct Answer: B"):
+  - reads by position, so maths fragments no longer scramble the text or split "(a)" from its value;
+  - questions or options containing maths, tables, fractions, roots, matrices or pictures are cut from the PDF as crisp images (exactly as printed); plain text stays text, with proper sub/superscripts (C₈H₁₄, mol⁻¹, sp³d);
+  - option pictures (structures, tables) are attached to their own option;
+  - sections come from the paper's banners: "Mathematics – Section A (MCQ)", "Physics – Section B (Numerical)", …; the review screen starts with these sections;
+  - questions end at the next section banner, so "SECTION B: NUMERICAL" no longer leaks into the last MCQ;
+  - clean reading-order text is kept for chapter tagging even when the statement is an image.
+- Numerical keys like "41.56 % (≈ 42)" accept both values ("41.56 or 42"); the admin key editor accepts "a or b".
+- More JEE keyword phrases for the offline chapter tagger; generic words (mole, velocity, set…) count half.
+- Import review shows image options; the test page shows an image statement full width; the response-sheet PDF draws image options and fits long section names.
+
 ## [Unreleased] — Streaks, badges, most improved; answer-key safety
 
 ### Added

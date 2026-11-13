@@ -695,13 +695,25 @@ export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, o
           <div style={{ display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '16px 18px', maxWidth: 880, margin: '0 auto', width: '100%' }}>
 
-              {/* 1. Problem Statement */}
-              <p style={{ fontSize: 'clamp(17.5px, 1.3vw, 19.5px)', fontWeight: 700, margin: '0 0 16px', lineHeight: 1.55, color: '#0f172a', letterSpacing: '-0.01em' }}>
-                {q.text}
-              </p>
+              {/* 1. Problem Statement (text, or the statement exactly as printed when it is maths / a table) */}
+              {(() => {
+                const stmtImg = !String(q.text || '').trim() && !q.diagram && !isMatch ? (q.question_image || q.qImage) : null
+                return stmtImg ? (
+                  <img
+                    src={stmtImg}
+                    alt={`Question ${cur + 1}`}
+                    onClick={() => setLightbox(stmtImg)}
+                    style={{ display: 'block', width: '100%', maxWidth: 820, height: 'auto', margin: '0 0 16px', cursor: 'zoom-in', background: '#fff' }}
+                  />
+                ) : (
+                  <p style={{ fontSize: 'clamp(17.5px, 1.3vw, 19.5px)', fontWeight: 700, margin: '0 0 16px', lineHeight: 1.55, color: '#0f172a', letterSpacing: '-0.01em', whiteSpace: 'pre-line' }}>
+                    {q.text}
+                  </p>
+                )
+              })()}
 
               {/* 2. Visual Asset (Original Diagram / Chemical Structure / Cropped Match Table) */}
-              {(q.diagram || q.question_image || q.qImage) && (
+              {(q.diagram || ((q.question_image || q.qImage) && (String(q.text || '').trim() || isMatch))) && (
                 <div
                   style={{
                     margin: '6px 0 16px',

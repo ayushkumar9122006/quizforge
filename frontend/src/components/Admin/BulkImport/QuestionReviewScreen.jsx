@@ -37,9 +37,13 @@ export default function QuestionReviewScreen({
   importing = false,
   isSubmitting = false,
 }) {
-  const initialSections = (analysisData?.configuredSections && Array.isArray(analysisData.configuredSections) && analysisData.configuredSections.length > 0)
-    ? [...analysisData.configuredSections]
-    : ['Section A', 'Section B', 'Section C', 'Section D']
+  // Sections printed in the paper ("Physics – Section B (Numerical)") win over the generic A–D list
+  const detectedSections = Array.isArray(analysisData?.detected_sections) ? analysisData.detected_sections : []
+  const initialSections = detectedSections.length > 0
+    ? [...detectedSections]
+    : (analysisData?.configuredSections && Array.isArray(analysisData.configuredSections) && analysisData.configuredSections.length > 0)
+      ? [...analysisData.configuredSections]
+      : ['Section A', 'Section B', 'Section C', 'Section D']
 
   const [sections, setSections] = useState(initialSections)
   const [newSecInput, setNewSecInput] = useState('')
@@ -960,7 +964,7 @@ export default function QuestionReviewScreen({
                       className="inp"
                       value={q.text}
                       onChange={(e) => updateQuestion(q.question_number, 'text', e.target.value)}
-                      placeholder="Question text statement..."
+                      placeholder={q.statement_is_image ? 'Shown exactly as in the PDF (image below). Leave empty, or type text to show above it.' : 'Question text statement...'}
                       style={{ width: '100%', resize: 'vertical', lineHeight: 1.5, fontSize: 13, fontFamily: 'monospace' }}
                     />
                   </div>
@@ -970,7 +974,7 @@ export default function QuestionReviewScreen({
                     <div style={{ padding: '10px 12px', background: '#f8fafc', borderRadius: 10, border: '1px solid #e2e8f0' }}>
                       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
                         <span style={{ fontSize: 11, fontWeight: 700, color: '#475569' }}>
-                          {isMatch ? '📊 Original Matching Table (from PDF)' : '🖼️ Attached Diagram / Structure'}
+                          {isMatch ? '📊 Original Matching Table (from PDF)' : q.statement_is_image && !q.diagram ? '📐 Statement as printed (maths / table kept exact)' : '🖼️ Attached Diagram / Structure'}
                         </span>
                         <button
                           onClick={() => {
@@ -986,7 +990,7 @@ export default function QuestionReviewScreen({
                         src={q.diagram || q.question_image}
                         alt="Question Diagram"
                         onClick={() => setLightboxImg(q.diagram || q.question_image)}
-                        style={{ maxHeight: isMatch ? 260 : 130, maxWidth: '100%', objectFit: 'contain', cursor: 'zoom-in', borderRadius: 6, display: 'block', background: '#fff', border: '1px solid #e2e8f0' }}
+                        style={{ maxHeight: isMatch ? 260 : (q.statement_is_image ? 320 : 130), maxWidth: '100%', objectFit: 'contain', cursor: 'zoom-in', borderRadius: 6, display: 'block', background: '#fff', border: '1px solid #e2e8f0' }}
                       />
                       <span style={{ fontSize: 11, color: '#64748b', display: 'block', marginTop: 4 }}>
                         🔍 Click image to enlarge full screen
@@ -1120,12 +1124,17 @@ export default function QuestionReviewScreen({
                               <span style={{ fontWeight: 800, fontSize: 12, width: 22, color: isChecked ? '#065f46' : '#64748b' }}>
                                 ({label})
                               </span>
-                              <input
-                                type="text"
-                                value={opt.text}
-                                onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
-                                style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
-                              />
+                              {opt.image && !opt.text ? (
+                                <img src={opt.image} alt={`Option ${opt.label || String.fromCharCode(65 + oi)}`} onClick={() => setLightboxImg(opt.image)}
+                                  style={{ flex: 1, minWidth: 0, maxHeight: 64, maxWidth: '100%', objectFit: 'contain', objectPosition: 'left center', cursor: 'zoom-in', background: '#fff' }} />
+                              ) : (
+                                <input
+                                  type="text"
+                                  value={opt.text}
+                                  onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
+                                  style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
+                                />
+                              )}
                               {isChecked && (
                                 <span style={{ fontSize: 10, fontWeight: 800, color: '#059669', background: '#d1fae5', padding: '2px 6px', borderRadius: 4 }}>
                                   CORRECT
@@ -1168,12 +1177,17 @@ export default function QuestionReviewScreen({
                                 <span style={{ fontWeight: 800, fontSize: 12, width: 22, color: isCorrect ? '#065f46' : '#64748b' }}>
                                   ({opt.label || String.fromCharCode(65 + oi)})
                                 </span>
-                                <input
-                                  type="text"
-                                  value={opt.text}
-                                  onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
-                                  style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
-                                />
+                                {opt.image && !opt.text ? (
+                                  <img src={opt.image} alt={`Option ${opt.label || String.fromCharCode(65 + oi)}`} onClick={() => setLightboxImg(opt.image)}
+                                    style={{ flex: 1, minWidth: 0, maxHeight: 64, maxWidth: '100%', objectFit: 'contain', objectPosition: 'left center', cursor: 'zoom-in', background: '#fff' }} />
+                                ) : (
+                                  <input
+                                    type="text"
+                                    value={opt.text}
+                                    onChange={(e) => updateOptionText(q.question_number, oi, e.target.value)}
+                                    style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none' }}
+                                  />
+                                )}
                                 {isCorrect && (
                                   <span style={{ fontSize: 10, fontWeight: 800, color: '#059669', background: '#d1fae5', padding: '2px 6px', borderRadius: 4 }}>
                                     CORRECT

@@ -114,6 +114,26 @@ def _extract_image_bytes(img_val: Optional[str]) -> Optional[bytes]:
     return None
 
 
+
+def _draw_option_image(page, data_url, x: float, y: float, max_h: float = 26.0, max_w: float = 240.0) -> float:
+    """Draw an image option (maths / structure cut from the PDF) and return its drawn width (0 if none)."""
+    raw = _extract_image_bytes(data_url) if data_url else None
+    if not raw:
+        return 0.0
+    try:
+        pix = pymupdf.Pixmap(raw)
+        if pix.width <= 0 or pix.height <= 0:
+            return 0.0
+        h = max_h
+        w = h * pix.width / pix.height
+        if w > max_w:
+            w = max_w
+            h = w * pix.height / pix.width
+        page.insert_image(pymupdf.Rect(x, y, x + w, y + h), stream=raw, keep_proportion=True)
+        return w
+    except Exception:
+        return 0.0
+
 def generate_response_sheet_pdf(
     attempt,
     quiz,
@@ -519,6 +539,7 @@ def generate_response_sheet_pdf(
             answer_block_h = (len(options) * 16.0) + 40.0
         else:
             answer_block_h = (len(options) * 16.0) + 24.0
+        answer_block_h += 14.0 * sum(1 for o in options if getattr(o, "image", None) and not (o.text or "").strip())
 
         explanation_h = 0.0
         if q.explanation and q.explanation.strip():
@@ -544,7 +565,14 @@ def generate_response_sheet_pdf(
             width=0.7
         )
 
+        right_hdr = f"Status: {status_text}   |   Marks: {marks_str}   |   Time: {time_spent_str}"
+        right_w = pymupdf.get_text_length(right_hdr, fontname="hebo", fontsize=8.5)
+        avail = (right_m - 10 - right_w) - (left_m + 10) - 14
         left_hdr = f"Question {idx + 1}   •   Section: {q.section or 'General'}   •   {type_label}"
+        if pymupdf.get_text_length(left_hdr, fontname="hebo", fontsize=9) > avail:
+            left_hdr = f"Q{idx + 1}  •  {q.section or 'General'}"     # long subject-section names already say MCQ / Numerical
+        while left_hdr and pymupdf.get_text_length(left_hdr, fontname="hebo", fontsize=9) > avail:
+            left_hdr = left_hdr[:-2] + "…"
         page.insert_text(
             pymupdf.Point(left_m + 10, curr_y + 15),
             left_hdr,
@@ -553,9 +581,8 @@ def generate_response_sheet_pdf(
             color=(0.12, 0.15, 0.25)
         )
 
-        right_hdr = f"Status: {status_text}   |   Marks: {marks_str}   |   Time: {time_spent_str}"
         page.insert_text(
-            pymupdf.Point(right_m - 250, curr_y + 15),
+            pymupdf.Point(right_m - 10 - right_w, curr_y + 15),
             right_hdr,
             fontsize=8.5,
             fontname="hebo",
@@ -652,6 +679,14 @@ def generate_response_sheet_pdf(
                     marker = ""
                     font_w = "helv"
 
+                opt_img = getattr(opt, "image", None) if not opt_txt else None
+                if opt_img:
+                    page.insert_text(pymupdf.Point(left_m + 16, curr_y + 17), f"({opt_letter})", fontsize=8.5, fontname=font_w, color=opt_color)
+                    w = _draw_option_image(page, opt_img, left_m + 38, curr_y + 2)
+                    if marker:
+                        page.insert_text(pymupdf.Point(left_m + 46 + w, curr_y + 17), marker.strip(), fontsize=8.5, fontname=font_w, color=opt_color)
+                    curr_y += 29.0
+                    continue
                 line_text = f"{bullet}{marker}"
                 page.insert_text(
                     pymupdf.Point(left_m + 16, curr_y + 11),
@@ -731,6 +766,14 @@ def generate_response_sheet_pdf(
                     marker = ""
                     font_w = "helv"
 
+                opt_img = getattr(opt, "image", None) if not opt_txt else None
+                if opt_img:
+                    page.insert_text(pymupdf.Point(left_m + 16, curr_y + 17), f"({opt_letter})", fontsize=8.5, fontname=font_w, color=opt_color)
+                    w = _draw_option_image(page, opt_img, left_m + 38, curr_y + 2)
+                    if marker:
+                        page.insert_text(pymupdf.Point(left_m + 46 + w, curr_y + 17), marker.strip(), fontsize=8.5, fontname=font_w, color=opt_color)
+                    curr_y += 29.0
+                    continue
                 line_text = f"{bullet}{marker}"
                 page.insert_text(
                     pymupdf.Point(left_m + 16, curr_y + 11),
