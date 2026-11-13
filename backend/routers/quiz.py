@@ -4,15 +4,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from database.config import get_db
 from schemas.quiz import (
-    QuizCreate, QuizUpdate, QuizOut, QuizStudentOut,
+    QuizCreate, QuizUpdate, QuizOut, QuizStudentOut, QuizSummaryOut,
     QuizAvailabilityUpdate,
-    BulkImportAnalyzeResponse, BulkImportConfirmRequest
+    BulkImportAnalyzeResponse, BulkImportConfirmRequest,
+    QuestionChapterBulkUpdate, AnswerKeyBulkUpdate,
 )
 from schemas.session import StartQuizResponse
 from crud.quiz import (
     create_quiz, get_quiz, get_quizzes_by_creator,
     get_published_quizzes, update_quiz, delete_quiz, publish_quiz,
-    add_questions_to_quiz
+    add_questions_to_quiz, list_quiz_summaries
 )
 from services.pdf_importer_service import analyze_pdf
 from utils.dependencies import require_admin, get_current_user
@@ -34,37 +35,35 @@ async def create(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    from services.media_service import externalize_question_images
+    await externalize_question_images(data.questions)   # base64 images → Cloudinary URLs (if configured)
     quiz = await create_quiz(db, data, admin.id)
     return await get_quiz(db, quiz.id)
 
 
-@router.get("/my", response_model=List[QuizOut])
+@router.get("/my", response_model=List[QuizSummaryOut])
 async def my_quizzes(
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    quizzes = await get_quizzes_by_creator(db, admin.id)
-    result = []
-    for q in quizzes:
-        full = await get_quiz(db, q.id)
-        result.append(full)
-    return result
+    """Admin's quizzes as lightweight cards (no questions / images / PDFs)."""
+    return await list_quiz_summaries(db, creator_id=admin.id)
 
 
-@router.get("/published")
+@router.get("/published", response_model=List[QuizSummaryOut])
 async def published_quizzes(
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    quizzes = await get_published_quizzes(db)
-    result = []
-    for q in quizzes:
-        full = await get_quiz(db, q.id)
-        if user.role == UserRole.student:
-            result.append(QuizStudentOut.model_validate(full))
-        else:
-            result.append(QuizOut.model_validate(full))
-    return result
+    """Published quizzes as lightweight cards. Full questions come from GET /quizzes/{id} once a test starts."""
+    cards = await list_quiz_summaries(db, published_only=True)
+    open_ids = set((await db.execute(
+        select(QuizSession.quiz_id).join(Attempt, Attempt.session_id == QuizSession.id)
+        .where(Attempt.student_id == user.id, Attempt.status == AttemptStatus.in_progress.value)
+    )).scalars().all())
+    for c in cards:
+        c["in_progress"] = c["id"] in open_ids
+    return cards
 
 
 @router.get("/{quiz_id}")
@@ -245,7 +244,17 @@ async def start_quiz_attempt(
             detail=f"The test window has closed on {end_ist.strftime('%d %B %Y, %I:%M %p IST')}. Test has been submitted.",
         )
 
+    from models.all_models import Answer
+    saved_rows = (await db.execute(select(Answer).where(Answer.attempt_id == attempt.id))).scalars().all()
     return StartQuizResponse(
+        saved_answers=[
+            {
+                "question_id": a.question_id, "selected_option": a.selected_option,
+                "response_text": a.response_text, "marked_for_review": a.marked_for_review,
+                "time_taken_sec": a.time_taken_sec or 0,
+            }
+            for a in saved_rows
+        ],
         session_id=session.id,
         attempt_id=attempt.id,
         quiz_id=quiz.id,
@@ -378,6 +387,7 @@ async def import_analyze_pdf(
     default_pos_marks: float = Form(4.0),
     default_neg_marks: float = Form(1.0),
     default_section: str = Form("General"),
+    default_subject: str = Form(""),
     admin: User = Depends(require_admin),
 ):
     """
@@ -407,6 +417,7 @@ async def import_analyze_pdf(
             default_pos_marks=default_pos_marks,
             default_neg_marks=default_neg_marks,
             default_section=default_section,
+            default_subject=default_subject or None,
         )
         return response
     except Exception as e:
@@ -437,6 +448,145 @@ async def import_confirm_questions(
     if not payload.questions:
         raise HTTPException(status_code=400, detail="No questions provided for import")
 
+    from services.media_service import externalize_question_images
+    await externalize_question_images(payload.questions)
     updated_quiz = await add_questions_to_quiz(db, quiz_id, payload.questions)
     return updated_quiz
 
+
+
+# ── Chapter tagging (for cross-test weakness analysis) ─────────────────────────
+
+@router.put("/{quiz_id}/chapters", response_model=QuizOut)
+async def update_question_chapters(
+    quiz_id: str,
+    payload: QuestionChapterBulkUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Admin confirms / edits subject + chapter for questions of a quiz (stored as source=admin)."""
+    from services.jee_syllabus import canonical_chapter, normalize_subject, subject_of_chapter
+
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    by_id = {q.id: q for q in quiz.questions}
+    bad = []
+    for u in payload.updates:
+        q = by_id.get(u.question_id)
+        if not q:
+            bad.append(u.question_id)
+            continue
+        chapter = canonical_chapter(u.chapter)
+        if u.chapter and not chapter:
+            raise HTTPException(status_code=400, detail=f"Unknown chapter: {u.chapter}")
+        subject = normalize_subject(u.subject) or subject_of_chapter(chapter)
+        if chapter and subject and subject_of_chapter(chapter) != subject:
+            raise HTTPException(status_code=400, detail=f"Chapter '{chapter}' is not part of {subject}")
+        q.subject = subject
+        q.chapter = chapter
+        q.chapter_source = "admin" if chapter else None
+    if bad:
+        raise HTTPException(status_code=400, detail=f"Questions not in this quiz: {', '.join(bad[:5])}")
+    await db.flush()
+    db.expire_all()
+    return await get_quiz(db, quiz_id)
+
+
+@router.post("/{quiz_id}/chapters/auto-tag", response_model=QuizOut)
+async def auto_tag_chapters(
+    quiz_id: str,
+    overwrite_suggestions: bool = False,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Suggest chapters (AI when configured, keywords otherwise) for questions that
+    have no chapter yet. Admin-confirmed tags are never overwritten; earlier
+    AI/keyword suggestions are only replaced when overwrite_suggestions=true.
+    """
+    from services.chapter_tagger import suggest_many, question_text_for_tagging
+    from services.jee_syllabus import infer_subject
+
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+
+    targets = [
+        q for q in quiz.questions
+        if q.chapter_source != "admin" and (not q.chapter or overwrite_suggestions)
+    ]
+    items = [
+        {
+            "key": q.id,
+            "text": question_text_for_tagging(q.text, [{"text": o.text} for o in q.options]),
+            "subject": q.subject or infer_subject(q.section, quiz.subject),
+        }
+        for q in targets
+    ]
+    results = await suggest_many(items)
+    by_id = {q.id: q for q in targets}
+    for r in results:
+        q = by_id.get(r["key"])
+        if not q:
+            continue
+        if r.get("subject") and not q.subject:
+            q.subject = r["subject"]
+        if r.get("chapter"):
+            q.subject = r["subject"] or q.subject
+            q.chapter = r["chapter"]
+            q.chapter_source = r["source"]
+    await db.flush()
+    db.expire_all()
+    return await get_quiz(db, quiz_id)
+
+
+@router.put("/{quiz_id}/answer-keys")
+async def update_answer_keys(
+    quiz_id: str,
+    payload: AnswerKeyBulkUpdate,
+    db: AsyncSession = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """
+    Set or correct answer keys. Every submitted attempt of the quiz is re-scored
+    immediately (like a revised JEE answer key), ranks and analytics follow.
+    """
+    import re as _re
+    from crud.session import rescore_quiz, has_answer_key
+    quiz = await get_quiz(db, quiz_id)
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    by_id = {q.id: q for q in quiz.questions}
+    for u in payload.updates:
+        q = by_id.get(u.question_id)
+        if not q:
+            raise HTTPException(status_code=400, detail=f"Question {u.question_id} is not in this quiz")
+        t = q.question_type or "single_correct"
+        n_opts = len(q.options or [])
+        if t == "numerical":
+            raw = (u.raw_answer or "").strip()
+            if raw and not _re.fullmatch(r"[-+]?\d+(\.\d{1,2})?", raw):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: numerical answer must be a number with up to 2 decimals")
+            q.raw_answer = raw or None
+        elif t == "multi_correct":
+            letters = sorted(set(_re.findall(r"[A-Fa-f]", u.raw_answer or "")), key=str.upper)
+            letters = [l.upper() for l in letters]
+            if any(ord(l) - 65 >= n_opts for l in letters):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: option letter out of range")
+            q.raw_answer = ", ".join(letters) or None
+            q.correct_answer = None
+        else:
+            if u.correct_answer is not None and not (0 <= u.correct_answer < max(n_opts, 1)):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: option out of range")
+            q.correct_answer = u.correct_answer
+            q.raw_answer = chr(65 + u.correct_answer) if u.correct_answer is not None else None
+    await db.flush()
+    rescored = await rescore_quiz(db, quiz_id)
+    db.expire_all()
+    fresh = await get_quiz(db, quiz_id)
+    return {
+        "rescored_attempts": rescored,
+        "missing_key_count": sum(1 for q in fresh.questions if not has_answer_key(q)),
+        "quiz": QuizOut.model_validate(fresh),
+    }

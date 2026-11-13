@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import Lightbox from '../Common/Lightbox.jsx'
 import LiveLeaderboard from './LiveLeaderboard.jsx'
+import AttemptReport from '../Progress/AttemptReport.jsx'
 import { getExplanation } from '../../services/llmService.js'
 import { formatDuration } from '../../services/utils.js'
 import { viewSolutionPdf } from '../../services/quizService.js'
@@ -16,9 +17,11 @@ export default function Results({
   leaderboard = [],
   currentUserId = null,
   currentUserName = null,
+  onOpenProgress = null,
 }) {
   const questions = result.questions || quiz.questions || []
-  const [tab, setTab] = useState('analytics') // 'analytics' | 'review'
+  const reportAttemptId = result.id || result.attempt_id || result.attemptId || null
+  const [tab, setTab] = useState(reportAttemptId ? 'report' : 'analytics') // 'report' | 'analytics' | 'review'
   const [explanations, setExpl] = useState({})
   const [loadingE, setLoading] = useState({})
   const [expanded, setExpanded] = useState(null)
@@ -99,7 +102,7 @@ export default function Results({
   // Solution PDF presence
   const quizId = quiz.id || result.quiz_id || result.quizId
   const hasSolutionPdf = Boolean(
-    quiz.solution_pdf || quiz.solution_pdf_name ||
+    quiz.has_solution_pdf || quiz.solution_pdf || quiz.solution_pdf_name ||
     result.solution_pdf || result.solution_pdf_name ||
     result.has_solution_pdf
   )
@@ -265,6 +268,26 @@ export default function Results({
         borderRadius: 14,
         border: '1px solid #e2e8f0'
       }}>
+        {reportAttemptId && (
+          <button
+            onClick={() => setTab('report')}
+            style={{
+              flex: 1,
+              padding: '11px 18px',
+              borderRadius: 10,
+              border: 'none',
+              background: tab === 'report' ? '#6366f1' : 'transparent',
+              color: tab === 'report' ? '#fff' : '#475569',
+              fontWeight: 800,
+              fontSize: 14,
+              cursor: 'pointer',
+              transition: 'all .18s',
+              boxShadow: tab === 'report' ? '0 2px 8px rgba(99,102,241,0.3)' : 'none'
+            }}
+          >
+            🎯 Rank & Mistakes
+          </button>
+        )}
         <button
           onClick={() => setTab('analytics')}
           style={{
@@ -302,6 +325,11 @@ export default function Results({
           📝 Question-by-Question Review
         </button>
       </div>
+
+      {/* TAB 0: RANK, PERCENTILE, SUBJECT RANKS, MISTAKES BY CHAPTER, HISTORY */}
+      {tab === 'report' && reportAttemptId && (
+        <AttemptReport attemptId={reportAttemptId} onOpenProgress={onOpenProgress} />
+      )}
 
       {/* TAB 1: COMPREHENSIVE ANALYSIS */}
       {tab === 'analytics' && (

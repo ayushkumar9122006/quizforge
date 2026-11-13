@@ -65,6 +65,8 @@ class User(Base):
     role        : Mapped[UserRole] = mapped_column(String(20), default=UserRole.student.value, nullable=False)
     is_active   : Mapped[bool]     = mapped_column(Boolean, default=True, nullable=False)
     avatar_url  : Mapped[str|None] = mapped_column(String(500), nullable=True)
+    target_marks: Mapped[float|None] = mapped_column(Float, nullable=True)  # student's JEE goal, out of 300
+    daily_goal  : Mapped[int]   = mapped_column(Integer, default=10, server_default="10", nullable=False)  # questions to revise per day (streak)
     created_at  : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at  : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
@@ -135,6 +137,10 @@ class Quiz(Base):
     updated_at     : Mapped[datetime]   = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
 
     @property
+    def has_solution_pdf(self) -> bool:
+        return bool(self.solution_pdf)
+
+    @property
     def effective_total_duration_minutes(self) -> float:
         """Returns authoritative total duration in minutes (2 decimals), falling back to time_per_q_sec for legacy quizzes."""
         if self.total_duration_minutes is not None:
@@ -170,6 +176,11 @@ class Question(Base):
     quiz_id        : Mapped[str]          = mapped_column(String(36), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
     order_index    : Mapped[int]          = mapped_column(Integer, nullable=False, default=0)
     section        : Mapped[str]          = mapped_column(String(255), default="General", nullable=False)
+    # Syllabus tagging used for cross-test weakness analysis.
+    # subject: Physics | Chemistry | Mathematics (section stays free-form, e.g. "Physics – Section A (MCQ)")
+    subject        : Mapped[str|None]     = mapped_column(String(50), nullable=True, index=True)
+    chapter        : Mapped[str|None]     = mapped_column(String(120), nullable=True, index=True)
+    chapter_source : Mapped[str|None]     = mapped_column(String(20), nullable=True)  # ai | keyword | admin
     text           : Mapped[str]          = mapped_column(Text, default="", nullable=False)
     question_image : Mapped[str|None]     = mapped_column(Text, nullable=True)  # file path OR base64 data URL
     content_type   : Mapped[ContentType]  = mapped_column(String(20), default=ContentType.text.value)
@@ -403,4 +414,79 @@ class NoticeRead(Base):
 
     __table_args__ = (
         UniqueConstraint("notice_id", "user_id", name="uq_notice_user_read"),
+    )
+
+
+
+# ── Mistake notebook & practice ───────────────────────────────────────────────
+
+class MistakeItem(Base):
+    """
+    A question the student got wrong / skipped, scheduled for spaced re-attempts.
+    Due immediately, then again 3, 7 and 21 days after each review; mastered
+    after two correct re-attempts in a row. A new mistake on the same question
+    (in a later test or practice) re-opens it.
+    """
+    __tablename__ = "mistake_items"
+
+    id              : Mapped[str]           = mapped_column(String(36), primary_key=True, default=new_uuid)
+    student_id      : Mapped[str]           = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    question_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
+    quiz_id         : Mapped[str]           = mapped_column(String(36), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False)
+    source_attempt_id: Mapped[str|None]     = mapped_column(String(36), nullable=True)
+    origin          : Mapped[str]           = mapped_column(String(20), default="wrong", nullable=False)   # wrong | partial | skipped
+    status          : Mapped[str]           = mapped_column(String(20), default="open", nullable=False)    # open | mastered
+    correct_streak  : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    review_count    : Mapped[int]           = mapped_column(Integer, default=0, nullable=False)
+    next_due_at     : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    last_reviewed_at: Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
+    last_result     : Mapped[str|None]      = mapped_column(String(20), nullable=True)                     # correct | wrong
+    created_at      : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at      : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("student_id", "question_id", name="uq_mistake_student_question"),
+        Index("ix_mistake_student_status_due", "student_id", "status", "next_due_at"),
+    )
+
+
+class MistakeReview(Base):
+    """One re-attempt of a notebook item (feeds the daily streak and goal)."""
+    __tablename__ = "mistake_reviews"
+
+    id          : Mapped[str]      = mapped_column(String(36), primary_key=True, default=new_uuid)
+    student_id  : Mapped[str]      = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    item_id     : Mapped[str]      = mapped_column(String(36), ForeignKey("mistake_items.id", ondelete="CASCADE"), nullable=False)
+    question_id : Mapped[str]      = mapped_column(String(36), nullable=False)
+    result      : Mapped[str]      = mapped_column(String(20), nullable=False)      # correct | wrong
+    reviewed_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        Index("ix_mistake_reviews_student_time", "student_id", "reviewed_at"),
+    )
+
+
+class PracticeSet(Base):
+    """A generated 'practice my weak chapters' set (untimed, instant feedback)."""
+    __tablename__ = "practice_sets"
+
+    id          : Mapped[str]           = mapped_column(String(36), primary_key=True, default=new_uuid)
+    student_id  : Mapped[str]           = mapped_column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    chapters    : Mapped[list]          = mapped_column(JSON, nullable=False)       # [{subject, chapter}]
+    question_ids: Mapped[list]          = mapped_column(JSON, nullable=False)
+    created_at  : Mapped[datetime]      = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+    completed_at: Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
+
+
+class PracticeAnswer(Base):
+    __tablename__ = "practice_answers"
+
+    id          : Mapped[str]      = mapped_column(String(36), primary_key=True, default=new_uuid)
+    set_id      : Mapped[str]      = mapped_column(String(36), ForeignKey("practice_sets.id", ondelete="CASCADE"), nullable=False, index=True)
+    question_id : Mapped[str]      = mapped_column(String(36), ForeignKey("questions.id", ondelete="CASCADE"), nullable=False)
+    kind        : Mapped[str]      = mapped_column(String(20), nullable=False)      # correct | partial | wrong | skipped
+    answered_at : Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("set_id", "question_id", name="uq_practice_set_question"),
     )

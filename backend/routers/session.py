@@ -1,6 +1,9 @@
 """
-Session Router — quiz rooms, attempts, leaderboard, analytics.
-After every submit, broadcasts leaderboard update via WebSocket.
+Session Router — attempts, autosave, results, leaderboard, analytics.
+
+Students start tests directly (POST /quizzes/{id}/start-attempt); a session is
+an internal container for the attempts of one quiz. The old room-code / live
+room flow (join, start, end, WebSocket broadcasts) has been removed.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
@@ -10,79 +13,65 @@ from sqlalchemy.orm import selectinload
 import re
 from database.config import get_db
 from schemas.session import (
-    SessionCreate, SessionOut, JoinSessionRequest,
+    AutosaveOut,
     AttemptSubmit, AttemptResultOut, AnswerResultOut, LeaderboardEntryOut,
     StudentAttemptHistoryItemOut
 )
 from crud.session import (
-    create_session, get_session_by_code, get_session_by_id,
-    start_session, end_session, get_or_create_attempt, get_attempt,
+    get_session_by_id, get_attempt, autosave_attempt,
     submit_attempt, get_leaderboard, get_student_attempts
 )
 from crud.quiz import get_quiz
-from utils.dependencies import require_admin, get_current_user
+from utils.dependencies import get_current_user
 from models.all_models import User, SessionStatus, UserRole, AttemptStatus, Attempt
 from services.llm_service import resolve_unset_answers
 from services.analytics_service import get_session_analytics
 from services.response_sheet_service import generate_response_sheet_pdf
-from websocket.manager import manager
-from websocket.events import evt_leaderboard, evt_student_submitted, evt_quiz_started, evt_quiz_ended
 from datetime import datetime, timezone, timedelta
 from typing import List
 
 router = APIRouter(prefix="/sessions", tags=["Sessions"])
 
 
-@router.post("/", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
-async def create(
-    data: SessionCreate,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    quiz = await get_quiz(db, data.quiz_id)
-    if not quiz:
-        raise HTTPException(status_code=404, detail="Quiz not found")
-    session = await create_session(db, data.quiz_id, data.max_students)
-    return session
-
-
-@router.post("/join", response_model=SessionOut)
-async def join(
-    data: JoinSessionRequest,
+@router.put("/{session_id}/autosave", response_model=AutosaveOut)
+async def autosave(
+    session_id: str,
+    data: AttemptSubmit,
     db: AsyncSession = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
-    session = await get_session_by_code(db, data.room_code.strip())
-    if not session:
-        raise HTTPException(status_code=404, detail="Room not found. Check the code.")
-    if session.status == SessionStatus.completed:
-        raise HTTPException(status_code=400, detail="This room has already ended.")
-    await get_or_create_attempt(db, session.id, user.id)
-    return session
+    """
+    Save in-progress answers without scoring (called every ~30 s by the test page).
+    If the browser dies, the student can resume on any device, and an abandoned
+    attempt is auto-submitted with these answers after the deadline.
+    """
+    attempt = await get_attempt(db, session_id, user.id)
+    if not attempt:
+        raise HTTPException(status_code=404, detail="No attempt for this test")
+    if attempt.status != AttemptStatus.in_progress:
+        raise HTTPException(status_code=409, detail="This test has already been submitted.")
+    session = await get_session_by_id(db, session_id)
+    quiz = await get_quiz(db, session.quiz_id) if session else None
+    if not quiz:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    deadline = _attempt_deadline(attempt, quiz)
+    if datetime.now(timezone.utc) > deadline + timedelta(minutes=2):
+        raise HTTPException(status_code=409, detail="Time is over for this test.")
+    saved = await autosave_attempt(db, attempt, data, {q.id for q in quiz.questions})
+    return AutosaveOut(saved=saved, saved_at=datetime.now(timezone.utc))
 
 
-@router.post("/{session_id}/start", response_model=SessionOut)
-async def start(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    session = await start_session(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
+LATE_GRACE = timedelta(seconds=90)   # network / clock slack for the client's own deadline submit
 
-    quiz = await get_quiz(db, session.quiz_id)
 
-    # Broadcast quiz:started to all clients in the room
-    await manager.broadcast(
-        session.room_code,
-        evt_quiz_started(
-            session_id=session.id,
-            time_per_q_sec=quiz.time_per_q_sec if quiz else 300,
-            total_questions=len(quiz.questions) if quiz else 0,
-        )
-    )
-    return session
+def _attempt_deadline(attempt, quiz):
+    base = int(round(quiz.effective_total_duration_minutes * 60))
+    started = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+    deadline = started + timedelta(seconds=base)
+    if quiz.availability_end:
+        end = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
+        deadline = min(deadline, end)
+    return deadline
 
 
 @router.post("/{session_id}/submit", response_model=AttemptResultOut)
@@ -139,49 +128,27 @@ async def submit(
     # ONLY place correct answers are ever resolved for scoring purposes.
     await resolve_unset_answers(db, questions)
 
-    # Determine if auto-submission is required by server-authoritative deadline
-    total_q = len(questions) or 1
-    base_duration_sec = total_q * (quiz.time_per_q_sec or 300)
-    started_at_tz = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
-    deadline = started_at_tz + timedelta(seconds=base_duration_sec)
-    if quiz.availability_end:
-        end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
-        deadline = min(deadline, end_tz)
-
+    # Server-authoritative deadline (same rule as start-attempt and autosave)
+    deadline = _attempt_deadline(attempt, quiz)
     now_utc = datetime.now(timezone.utc)
     is_auto = auto or (now_utc > deadline + timedelta(seconds=5))
+    if now_utc > deadline + LATE_GRACE:
+        # Too late: ignore the late payload and score what was saved before time ran out
+        from models.all_models import Answer
+        from schemas.session import AnswerSubmit
+        saved = (await db.execute(select(Answer).where(Answer.attempt_id == attempt.id))).scalars().all()
+        started = attempt.started_at.replace(tzinfo=timezone.utc) if attempt.started_at.tzinfo is None else attempt.started_at
+        data = AttemptSubmit(
+            answers=[
+                AnswerSubmit(question_id=a.question_id, selected_option=a.selected_option, response_text=a.response_text,
+                             marked_for_review=a.marked_for_review, time_taken_sec=a.time_taken_sec or 0)
+                for a in saved
+            ],
+            time_taken_sec=int((deadline - started).total_seconds()),
+        )
+        is_auto = True
 
     attempt, results = await submit_attempt(db, attempt.id, data, questions, auto=is_auto)
-
-    # ── Broadcast real-time updates ───────────────────────────────────────────
-    room_code = session.room_code
-
-    # 1. Leaderboard update → everyone in room
-    lb_entries = await get_leaderboard(db, session_id)
-    lb_payload = [
-        {
-            "rank":            e.rank,
-            "student_name":    e.student_name,
-            "score":           e.score,
-            "total_marks":     e.total_marks,
-            "accuracy":        round(e.accuracy, 3),
-            "time_taken_sec":  e.time_taken_sec,
-        }
-        for e in lb_entries
-    ]
-    await manager.broadcast(room_code, evt_leaderboard(lb_payload))
-
-    # 2. student:submitted → admin only (shows who just submitted)
-    my_entry = next((e for e in lb_entries if e.student_id == user.id), None)
-    await manager.broadcast_to_role(
-        room_code, "admin",
-        evt_student_submitted(
-            name=user.name,
-            score=attempt.score,
-            total=attempt.total_marks,
-            rank=my_entry.rank if my_entry else 0,
-        )
-    )
 
     return AttemptResultOut(
         id=attempt.id,
@@ -336,35 +303,3 @@ async def analytics(
 ):
     student_id = user.id if user.role == UserRole.student else None
     return await get_session_analytics(db, session_id, student_id=student_id)
-
-
-@router.post("/{session_id}/end", response_model=SessionOut)
-async def end(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    session = await end_session(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-
-    # Broadcast quiz ended to all in room
-    await manager.broadcast(session.room_code, evt_quiz_ended())
-    return session
-
-
-@router.get("/{session_id}/participants")
-async def participants(
-    session_id: str,
-    db: AsyncSession = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    """Return currently connected WebSocket participants for this session."""
-    session = await get_session_by_id(db, session_id)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found")
-    return {
-        "room_code":   session.room_code,
-        "participants": manager.get_participants(session.room_code),
-        "count":       manager.count(session.room_code),
-    }

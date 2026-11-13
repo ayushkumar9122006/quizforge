@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     smtp_from_email: str = os.getenv("SMTP_FROM_EMAIL", "noreply@quizee.com")
     smtp_use_tls: bool = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
     otp_expire_minutes: int = int(os.getenv("OTP_EXPIRE_MINUTES", "5"))
+    # Image storage (Cloudinary). Either CLOUDINARY_URL=cloudinary://<key>:<secret>@<cloud>
+    # or the three separate variables. When unset, images stay in the database.
+    cloudinary_url: str = os.getenv("CLOUDINARY_URL", "")
+    cloudinary_cloud_name: str = os.getenv("CLOUDINARY_CLOUD_NAME", "")
+    cloudinary_api_key: str = os.getenv("CLOUDINARY_API_KEY", "")
+    cloudinary_api_secret: str = os.getenv("CLOUDINARY_API_SECRET", "")
+    cloudinary_folder: str = os.getenv("CLOUDINARY_FOLDER", "quizforge")
     environment: str = os.getenv("ENVIRONMENT", os.getenv("APP_ENV", "development"))
 
     @property

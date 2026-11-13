@@ -1,5 +1,66 @@
 # Changelog
 
+## [Unreleased] — Streaks, badges, most improved; answer-key safety
+
+### Added
+- **Daily goal + streak**: a day counts when you revise your goal (default 10 questions from the notebook or weak-chapter practice) or submit a test. Streak chip on Home, the notebook and practice; streak panel with the last 14 days and a goal picker on My Progress.
+- **Goal-done celebration**: when today's goal is hit (or a test is taken), the ring fills, the flame lights up, the streak number rolls up, confetti bursts and the week's days tick in. Plays once per student per day; respects reduced-motion. The streak chip pops with a +1 on every answer.
+- **Badges** (16): first test, 5/10/25 tests, mastered 10/50/100 mistakes, 3/7/30-day streak, 5 practice sets, beat your target, new personal best, rank climber (+20 percentile), top 10 %, no silly mistakes. Locked badges show progress; new ones are flagged.
+- **Most improved leaderboard**: ranked by improvement (last 2 tests vs the 2 before), not the top score. On My Progress (top 10 + you) and as an admin tab in Students & Progress.
+- **Answer-key editor** on the admin Chapters screen (now "Chapters & answer keys"), with a "Missing key" filter; saving re-scores every submitted attempt. Admin quiz cards show "🔑 N missing answer keys".
+- Migration `0012` (users.daily_goal, mistake_reviews; seeded from existing notebook reviews).
+
+### Fixed
+- **Wrong marks from guessed keys**: the AI used to default a missing key to option A when it had no API key or failed. It no longer guesses; questions without a key are ungraded (no marks, no penalty, excluded from totals and analytics) until the admin sets one.
+- **PDF import of numerical answers**: "Answer: 12" / "2.5" are kept as numerical answers instead of being mapped to an option letter.
+- **Late submits**: a submit more than 90 s past the server deadline scores the last autosaved answers, not the late payload.
+
+## [Unreleased] — Next level: notebook, practice, autosave, PWA
+
+### Added
+- **Mistake notebook**: wrong / partial / skipped questions captured on every submission (and backfilled from history); spaced re-attempts 3 → 7 → 21 days; mastered after two correct in a row.
+- **Practice my weak chapters**: 15–20 questions from the 3 weakest chapters, untimed with instant feedback, never counted in rank or trend; only from finished or closed tests.
+- **Time strategy**: slow-and-wrong (> 4 min), rushed-and-wrong (< 20 s), time per subject vs topper and batch average (per test and across tests).
+- **Easy / medium / hard** per question from batch accuracy, with marks lost on easy questions.
+- **Target tracker**: goal out of 300, gap overall and per subject, estimated JEE Main percentile (published 2025 marks-vs-percentile analyses, clearly labelled as an estimate).
+- **Autosave** every 30 s, on tab hide and on reconnect, with a Saved / Offline indicator; resume on any device (`saved_answers`, `in_progress`).
+- **PWA**: manifest, icons, service worker (app shell only), Install app button, iOS Add-to-Home-Screen tip.
+- **Fullscreen test mode**: leaving fullscreen is a strike under the 3-strike rule; prompts to re-enter.
+- **Cloudinary** image storage when `CLOUDINARY_URL` is set, plus `migrate_images_to_cloudinary.py`.
+- Migration `0011` (users.target_marks, mistake_items, practice_sets, practice_answers).
+
+### Changed
+- Test lists return lightweight cards (no questions, images or PDFs), in 2 queries instead of one full load per quiz.
+- Scoring moved into `evaluate_answer()` and shared by tests, notebook and practice (all existing scoring tests pass unchanged).
+
+### Removed
+- Room codes, waiting room, live session monitor and the WebSocket room (`/sessions` create/join/start/end/participants, `/ws/{room}`).
+
+### Security
+- Solution PDF is no longer included in any quiz payload (only the gated `/quizzes/{id}/solution-pdf`).
+- `/llm/explain` is blocked for students until they submit that test.
+
+
+## [Unreleased] — JEE progress analytics
+
+### Added
+- **Subject + chapter on every question** (`questions.subject`, `chapter`, `chapter_source`; migration `0010`). Subject is backfilled from section names like "Physics – Section A".
+- **JEE Main syllabus list** (`services/jee_syllabus.py`): 74 chapters across Physics / Chemistry / Maths, with keyword hints.
+- **Chapter tagging** (`services/chapter_tagger.py`): AI picks from the fixed list (OpenRouter), keyword fallback with no key, majority-subject correction for single-subject papers. Suggestions are stored as `ai` / `keyword` until an admin confirms (`admin`).
+- **PDF import**: detects "PHYSICS / CHEMISTRY / MATHEMATICS" headings; the review screen auto-suggests chapters and has a per-question subject/chapter picker plus "set subject for all".
+- **Quiz setup**: subject + question type per section, one-click *JEE Main template* (3 × (20 MCQ + 5 numerical), 180 min, +4/−1).
+- **Question editor**: question-type selector, numerical answer field, chapter picker with "Suggest chapter".
+- **Admin → 🏷 Chapters** screen per quiz: suggest for untagged, confirm all, filter by untagged / needs confirmation.
+- **Progress API** (`routers/progress.py`, `services/progress_service.py`): attempt report, student progress, batch insights.
+- **Results → 🎯 Rank & Mistakes** tab: rank, percentile, subject-wise rank vs topper/average, marks lost to wrong vs skipped, chapter losses vs batch accuracy, score curve across all tests, mistake % per chapter.
+- **Student → 📈 My Progress**: trend (improving / steady / declining), score + percentile curve, subject trends, focus list with diagnosis and advice, chapter × test mistake grid, sortable chapter table, strong chapters, question-type accuracy, test history.
+- **Admin → 👥 Students & Progress**: student list with sparkline and trend, drill-down to any student, batch weak chapters (students struggling), batch average per test.
+
+### Fixed
+- Section score on the immediate results screen ignored multi-correct partial marks and numerical negatives.
+- `crud/quiz.py` referenced `ContentType` without importing it.
+
+
 All notable changes made during the production-readiness pass are documented here.
 
 ## [Unreleased] — Production Readiness Pass

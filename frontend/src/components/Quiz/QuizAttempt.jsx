@@ -3,17 +3,21 @@ import CircularTimer from '../Common/CircularTimer.jsx'
 import Palette       from './Palette.jsx'
 import Lightbox      from '../Common/Lightbox.jsx'
 import { formatTime } from '../../services/utils.js'
+import { attemptKey, readAttempt, writeAttempt, clearAttempt } from '../../services/attemptStorage.js'
+import { restoreSavedAnswers } from '../../services/answerPayload.js'
+import { fullscreenSupported, isFullscreen, enterFullscreen, exitFullscreen } from '../../services/fullscreen.js'
 
 const LABELS = ['A','B','C','D','E','F']
 
-export default function QuizAttempt({ quiz, userName, onSubmit }) {
+export default function QuizAttempt({ quiz, userName, userId = null, onSubmit, onAutosave = null }) {
   const questions = quiz.questions || []
   const perQ      = Math.max(1, Math.round(Number(quiz.timePerQ) || 300))
   const totalTime = Math.max(1, Math.round(quiz.effectiveDurationSec || (questions.length * perQ)))
 
-  const storageDeadlineKey = `quizee_attempt_${quiz.id}_deadline`
-  const storageAnswersKey  = `quizee_attempt_${quiz.id}_answers`
-  const storageTabSwitchesKey = `quizee_attempt_${quiz.id}_tab_switches`
+  // Saved per student + quiz so an accidental navigation / refresh resumes exactly here
+  const storageDeadlineKey    = attemptKey(userId, quiz.id, 'deadline')
+  const storageAnswersKey     = attemptKey(userId, quiz.id, 'answers')
+  const storageTabSwitchesKey = attemptKey(userId, quiz.id, 'tab_switches')
 
   const getTargetDeadlineMs = () => {
     if (quiz.effectiveDeadline) {
@@ -39,17 +43,27 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     return diffSec > 0 ? diffSec : totalTime
   }
 
+  // Answers saved on the server (autosave) — used when this device has nothing, e.g. resuming on a new device
+  const serverCopy = useRef(null)
+  if (serverCopy.current === null) serverCopy.current = restoreSavedAnswers(questions, quiz.savedAnswers || [])
   const [answers,  setAnswers]  = useState(() => {
     try {
       const raw = localStorage.getItem(storageAnswersKey) || sessionStorage.getItem(storageAnswersKey)
-      return raw ? JSON.parse(raw) : {}
-    } catch { return {} }
+      const local = raw ? JSON.parse(raw) : {}
+      return Object.keys(local).length ? local : serverCopy.current.answers
+    } catch { return serverCopy.current.answers }
   })
-  const [cur,      setCur]      = useState(0)
+  const [cur,      setCur]      = useState(() => {
+    const c = Number(readAttempt(userId, quiz.id, 'cur', 0))
+    return Number.isInteger(c) && c >= 0 && c < questions.length ? c : 0
+  })
   const [qTime,    setQTime]    = useState(perQ)
   const [totLeft,  setTotLeft]  = useState(getInitialTotLeft)
   const [confirm,  setConfirm]  = useState(false)
-  const [marked,   setMarked]   = useState(new Set())
+  const [marked,   setMarked]   = useState(() => {
+    const local = readAttempt(userId, quiz.id, 'marked', null)
+    return local ? new Set(local) : new Set(serverCopy.current.marked)
+  })
   const [palette,  setPalette]  = useState(false)
   const [lightbox, setLightbox] = useState(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -59,14 +73,14 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   // ── Tab Switch / Strike Monitoring (3 violations max) ──
   const [tabSwitchCount, setTabSwitchCount] = useState(() => {
     try {
-      const saved = sessionStorage.getItem(storageTabSwitchesKey)
+      const saved = localStorage.getItem(storageTabSwitchesKey)
       return saved ? Math.min(3, Math.max(0, parseInt(saved, 10) || 0)) : 0
     } catch { return 0 }
   })
   const [tabWarningModal, setTabWarningModal] = useState(null)
 
-  const [qTimes,   setQTimes]   = useState({})
-  const [totalSpent, setTotalSpent] = useState(0)
+  const [qTimes,   setQTimes]   = useState(() => readAttempt(userId, quiz.id, 'qtimes', null) || serverCopy.current.qTimes || {})
+  const [totalSpent, setTotalSpent] = useState(() => Number(readAttempt(userId, quiz.id, 'spent', 0)) || 0)
   const [lastVisitedPerSec, setLastVisitedPerSec] = useState({})
 
   const answersRef          = useRef(answers)
@@ -92,7 +106,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   useEffect(() => {
     tabSwitchCountRef.current = tabSwitchCount
     try {
-      sessionStorage.setItem(storageTabSwitchesKey, String(tabSwitchCount))
+      localStorage.setItem(storageTabSwitchesKey, String(tabSwitchCount))
     } catch {}
   }, [tabSwitchCount, storageTabSwitchesKey])
 
@@ -104,10 +118,65 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     return () => clearTimeout(timer)
   }, [])
 
-  useEffect(() => { markedRef.current  = marked  }, [marked])
-  useEffect(() => { qTimesRef.current  = qTimes  }, [qTimes])
-  useEffect(() => { totalSpentRef.current = totalSpent }, [totalSpent])
-  useEffect(() => { curRef.current = cur }, [cur])
+  useEffect(() => { markedRef.current  = marked; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'marked', [...marked]) }, [marked]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { qTimesRef.current  = qTimes; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'qtimes', qTimes) }, [qTimes]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { totalSpentRef.current = totalSpent; if (!submittedRef.current && totalSpent % 5 === 0) writeAttempt(userId, quiz.id, 'spent', totalSpent) }, [totalSpent]) // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { curRef.current = cur; if (!submittedRef.current) writeAttempt(userId, quiz.id, 'cur', cur) }, [cur]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Warn before closing / refreshing the tab mid-test (answers are kept either way)
+  useEffect(() => {
+    const onBeforeUnload = e => {
+      if (submittedRef.current) return
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [])
+
+  // ── Server autosave: every 30 s when something changed, when the tab is hidden,
+  //    and as soon as the connection comes back. Failures keep the device copy.
+  const [saveState, setSaveState] = useState({ status: 'idle', at: null }) // idle | saving | saved | offline
+  const dirtyRef = useRef(false)
+  const savingRef = useRef(false)
+  const firstRenderRef = useRef(true)
+  useEffect(() => {
+    if (firstRenderRef.current) { firstRenderRef.current = false; return }
+    dirtyRef.current = true
+  }, [answers, marked])
+  const saveNow = useCallback(async (force = false) => {
+    if (!onAutosave || submittedRef.current || isSubmittingRef.current || savingRef.current) return
+    if (!force && !dirtyRef.current) return
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) { setSaveState(s => ({ ...s, status: 'offline' })); return }
+    savingRef.current = true
+    dirtyRef.current = false
+    setSaveState(s => ({ ...s, status: 'saving' }))
+    try {
+      await onAutosave(answersRef.current, markedRef.current, qTimesRef.current, totalSpentRef.current)
+      setSaveState({ status: 'saved', at: new Date() })
+    } catch (e) {
+      dirtyRef.current = true
+      const st = e?.response?.status
+      setSaveState(s => ({ ...s, status: st === 409 ? 'closed' : 'offline' }))
+    } finally {
+      savingRef.current = false
+    }
+  }, [onAutosave])
+  useEffect(() => {
+    const t = setInterval(() => saveNow(false), 30000)
+    const onHidden = () => { if (document.visibilityState === 'hidden') saveNow(false) }
+    const onOnline = () => saveNow(true)
+    const onOffline = () => setSaveState(s => ({ ...s, status: 'offline' }))
+    document.addEventListener('visibilitychange', onHidden)
+    window.addEventListener('online', onOnline)
+    window.addEventListener('offline', onOffline)
+    return () => {
+      clearInterval(t)
+      document.removeEventListener('visibilitychange', onHidden)
+      window.removeEventListener('online', onOnline)
+      window.removeEventListener('offline', onOffline)
+    }
+  }, [saveNow])
 
   // Track last visited question index per section
   useEffect(() => {
@@ -155,11 +224,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         )
         // Mark as submitted and clean up storage only after confirmed success
         submittedRef.current = true
+        clearAttempt(userId, quiz.id)
+        exitFullscreen()
         try {
           localStorage.removeItem(storageDeadlineKey)
           localStorage.removeItem(storageAnswersKey)
           sessionStorage.removeItem(storageAnswersKey)
-          sessionStorage.removeItem(storageTabSwitchesKey)
+          localStorage.removeItem(storageTabSwitchesKey)
         } catch {}
       } catch (err) {
         console.error('Quiz submission failed:', err)
@@ -176,7 +247,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
   )
 
   // ── Centralized Tab-Switch Violation Handler ──
-  const handleTabViolation = useCallback(() => {
+  const handleTabViolation = useCallback((reason = 'tab') => {
     if (!isMountedRef.current) return
     if (isSubmittingRef.current || submittedRef.current) return
     const now = Date.now()
@@ -191,15 +262,15 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
     tabSwitchCountRef.current = nextCount
     setTabSwitchCount(nextCount)
     try {
-      sessionStorage.setItem(storageTabSwitchesKey, String(nextCount))
+      localStorage.setItem(storageTabSwitchesKey, String(nextCount))
     } catch {}
 
     if (nextCount === 1) {
-      setTabWarningModal({ count: 1 })
+      setTabWarningModal({ count: 1, reason })
     } else if (nextCount === 2) {
-      setTabWarningModal({ count: 2 })
+      setTabWarningModal({ count: 2, reason })
     } else if (nextCount >= 3) {
-      setTabWarningModal({ count: 3 })
+      setTabWarningModal({ count: 3, reason })
       // Auto-submit immediately using existing safe submission pipeline
       doSubmit(true)
     }
@@ -242,6 +313,27 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
       window.removeEventListener('focus', onWindowFocus)
     }
   }, [handleTabViolation])
+
+  // ── Fullscreen test mode: leaving fullscreen counts as a strike (same 3-strike rule) ──
+  const fsMode = fullscreenSupported()
+  const [inFs, setInFs] = useState(() => isFullscreen())
+  const wasFsRef = useRef(isFullscreen())
+  useEffect(() => {
+    if (!fsMode) return
+    const onChange = () => {
+      const now = isFullscreen()
+      setInFs(now)
+      if (!now && wasFsRef.current && !submittedRef.current && !isSubmittingRef.current) handleTabViolation('fullscreen')
+      wasFsRef.current = now
+    }
+    document.addEventListener('fullscreenchange', onChange)
+    document.addEventListener('webkitfullscreenchange', onChange)
+    return () => {
+      document.removeEventListener('fullscreenchange', onChange)
+      document.removeEventListener('webkitfullscreenchange', onChange)
+    }
+  }, [fsMode, handleTabViolation])
+  const returnToFullscreen = () => { if (fsMode) enterFullscreen() }
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -435,6 +527,19 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         <div style={{ flex:1, minWidth:0 }}>
           <div style={{ display:'flex', justifyContent:'space-between', fontSize:11, color:'#9ca3af', marginBottom:3 }}>
             <span>{done}/{questions.length} answered</span>
+            {onAutosave && (
+              <span
+                aria-live="polite"
+                title="Answers are saved on this device instantly and to the server every 30 seconds"
+                style={{ fontWeight: 700, color: saveState.status === 'offline' ? '#b45309' : saveState.status === 'closed' ? '#b91c1c' : '#059669' }}
+              >
+                {saveState.status === 'saving' && 'Saving…'}
+                {saveState.status === 'saved' && `✓ Saved ${saveState.at ? saveState.at.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' }) : ''}`}
+                {saveState.status === 'offline' && '⚠ Offline: answers saved on this device'}
+                {saveState.status === 'closed' && 'Time is over: submitting…'}
+                {saveState.status === 'idle' && '✓ Saved on this device'}
+              </span>
+            )}
           </div>
           <div style={{ height:4, background:'#f3f4f6', borderRadius:2 }}>
             <div className="pbar-fill" style={{ height:'100%', width:`${totPct}%`, background:totLeft<60?'#ef4444':'linear-gradient(90deg,#6366f1,#8b5cf6)', borderRadius:2 }} />
@@ -452,7 +557,7 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
         {tabSwitchCount > 0 && (
           <div style={{ display:'flex',alignItems:'center',gap:5,padding:'4px 10px',borderRadius:8,background:tabSwitchCount>=2?'#fee2e2':'#fef3c7',color:tabSwitchCount>=2?'#991b1b':'#92400e',fontSize:11,fontWeight:800,flexShrink:0,border:`1px solid ${tabSwitchCount>=2?'#fca5a5':'#fde68a'}` }}>
             <span>⚠️</span>
-            <span>Tab switches: {tabSwitchCount}/3</span>
+            <span title="Tab switches and leaving fullscreen">Strikes: {tabSwitchCount}/3</span>
           </div>
         )}
 
@@ -904,6 +1009,13 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
       )}
 
       {/* ── Tab Switch Warning Modal (Strikes 1, 2, 3) ── */}
+      {fsMode && !inFs && !tabWarningModal && !submittedRef.current && (
+        <div role="alert" style={{ position:'fixed', left:'50%', bottom:18, transform:'translateX(-50%)', zIndex:450, background:'#111827', color:'#fff', borderRadius:14, padding:'10px 14px', display:'flex', gap:12, alignItems:'center', boxShadow:'0 12px 30px rgba(0,0,0,.3)', maxWidth:'calc(100% - 32px)' }}>
+          <span style={{ fontSize:13 }}>This test runs in fullscreen. Leaving it counts as a strike.</span>
+          <button className="btn-pri" style={{ fontSize:12, padding:'6px 12px', whiteSpace:'nowrap' }} onClick={returnToFullscreen}>⛶ Enter fullscreen</button>
+        </div>
+      )}
+
       {tabWarningModal && (
         <div style={{ position:'fixed',inset:0,background:'rgba(10,10,25,.75)',display:'flex',alignItems:'center',justifyContent:'center',zIndex:500,backdropFilter:'blur(4px)' }}>
           <div style={{ background:'#fff',borderRadius:20,padding:'2rem',maxWidth:440,width:'90%',boxShadow:'0 25px 70px rgba(0,0,0,.25)',textAlign:'center' }}>
@@ -917,19 +1029,19 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
                   Violation 1 of 3
                 </div>
                 <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#111827' }}>
-                  Tab Switch Detected
+                  {tabWarningModal.reason === 'fullscreen' ? 'You Left Fullscreen' : 'Tab Switch Detected'}
                 </h3>
                 <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
-                  You navigated away from the quiz window. This is your <strong>1st warning</strong>.<br/>
-                  If you switch tabs <strong>2 more times</strong>, your quiz will be <strong>automatically submitted</strong> immediately.
+                  {tabWarningModal.reason === 'fullscreen' ? 'Leaving fullscreen during the test counts as a violation.' : 'You navigated away from the quiz window.'} This is your <strong>1st warning</strong>.<br/>
+                  After <strong>2 more</strong> (tab switches or leaving fullscreen), your quiz will be <strong>automatically submitted</strong> immediately.
                 </p>
                 <button
                   type="button"
                   className="btn-pri"
                   style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700 }}
-                  onClick={() => setTabWarningModal(null)}
+                  onClick={() => { setTabWarningModal(null); returnToFullscreen() }}
                 >
-                  I Understand, Return to Quiz
+                  {fsMode ? 'I Understand, Return to Fullscreen' : 'I Understand, Return to Quiz'}
                 </button>
               </>
             )}
@@ -940,19 +1052,19 @@ export default function QuizAttempt({ quiz, userName, onSubmit }) {
                   Violation 2 of 3 — Final Warning
                 </div>
                 <h3 style={{ margin:'0 0 10px', fontSize:20, fontWeight:800, color:'#b91c1c' }}>
-                  Warning: Second Tab Switch
+                  {tabWarningModal.reason === 'fullscreen' ? 'Warning: You Left Fullscreen Again' : 'Warning: Second Tab Switch'}
                 </h3>
                 <p style={{ color:'#4b5563', fontSize:14, margin:'0 0 20px', lineHeight:1.55 }}>
-                  You left the quiz tab again. This is your <strong>2nd violation</strong>.<br/>
+                  {tabWarningModal.reason === 'fullscreen' ? 'You left fullscreen again.' : 'You left the quiz tab again.'} This is your <strong>2nd violation</strong>.<br/>
                   <strong style={{ color:'#dc2626' }}>ONE MORE VIOLATION</strong> will immediately auto-submit your test and lock your answers.
                 </p>
                 <button
                   type="button"
                   className="btn-pri"
                   style={{ width:'100%',padding:'12px',borderRadius:10,fontSize:14,fontWeight:700,background:'#dc2626' }}
-                  onClick={() => setTabWarningModal(null)}
+                  onClick={() => { setTabWarningModal(null); returnToFullscreen() }}
                 >
-                  I Understand, Resume Test
+                  {fsMode ? 'I Understand, Return to Fullscreen' : 'I Understand, Resume Test'}
                 </button>
               </>
             )}

@@ -53,6 +53,8 @@ services:
         value: "true"
       - key: OTP_EXPIRE_MINUTES
         value: "5"
+      - key: CLOUDINARY_URL
+        sync: false          # cloudinary://<api_key>:<api_secret>@<cloud_name> (Cloudinary dashboard → API Keys)
 
   # Frontend (Static Site)
   - type: web
@@ -61,6 +63,13 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    headers:
+      - path: /sw.js
+        name: Cache-Control
+        value: no-cache
+      - path: /manifest.webmanifest
+        name: Cache-Control
+        value: no-cache
     routes:
       - type: rewrite
         source: /*

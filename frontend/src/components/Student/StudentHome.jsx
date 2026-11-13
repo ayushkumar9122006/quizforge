@@ -1,4 +1,7 @@
 import { usePublishedQuizzes } from '../../hooks/usePublishedQuizzes.js'
+import { resumableSeconds } from '../../services/attemptStorage.js'
+import InstallAppButton from '../Common/InstallAppButton.jsx'
+import { StreakChip, useStreak } from '../Progress/Motivation.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return ''
@@ -22,6 +25,8 @@ export default function StudentHome({
   user,
   onTake,
   onHistory,
+  onProgress,
+  onNotebook,
   onAnalytics,
   onLogout,
   attempts = [],
@@ -31,6 +36,7 @@ export default function StudentHome({
   onOpenNotices
 }) {
   const { quizzes, loading, error, reload } = usePublishedQuizzes()
+  const [streak] = useStreak(Boolean(onNotebook))
 
   // Map of completed quiz IDs
   const completedMap = {}
@@ -104,17 +110,44 @@ export default function StudentHome({
         <div>
           <h2 style={{ fontSize: 24, fontWeight: 900, margin: '0 0 4px', color: '#111827' }}>Available Tests</h2>
           <p style={{ fontSize: 14, color: '#6b7280', margin: 0 }}>Welcome back, <strong style={{ color: '#111827' }}>{user?.name}</strong>!</p>
+          {streak && <div style={{ marginTop: 10 }}><StreakChip streak={streak} onClick={onNotebook} /></div>}
         </div>
-        <div style={{ display: 'flex', gap: 9 }}>
+        <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap' }}>
+          {onProgress && (
+            <button className="btn-pri" onClick={onProgress} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📈 My Progress
+            </button>
+          )}
+          {onNotebook && (
+            <button className="btn-sec" onClick={onNotebook} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              📒 Mistake Notebook
+            </button>
+          )}
           <button className="btn-sec" onClick={onOpenNotices} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             📢 Notices {unreadCount > 0 && <span style={{ background: '#ef4444', color: '#fff', fontSize: 10, fontWeight: 800, borderRadius: 10, padding: '1px 6px' }}>{unreadCount}</span>}
           </button>
           <button className="btn-sec" onClick={onHistory}>
             🗂 My Test History ({histCount || attempts.length})
           </button>
+          <InstallAppButton />
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
         </div>
       </div>
+
+      {onProgress && (histCount || attempts.length) > 0 && (
+        <div
+          onClick={onProgress}
+          role="button"
+          style={{ marginBottom: 20, padding: '14px 18px', borderRadius: 16, cursor: 'pointer', background: 'linear-gradient(135deg,#eef2ff,#f5f3ff)', border: '1px solid #c7d2fe', display: 'flex', alignItems: 'center', gap: 14 }}
+        >
+          <span style={{ fontSize: 28 }} aria-hidden>🎯</span>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 800, color: '#312e81', fontSize: 15 }}>See if you're improving</div>
+            <div style={{ fontSize: 13, color: '#4f46e5' }}>Your score curve across {histCount || attempts.length} test{(histCount || attempts.length) !== 1 ? 's' : ''}, the chapters you keep getting wrong, and what to revise next.</div>
+          </div>
+          <span style={{ fontWeight: 800, color: '#4338ca' }}>→</span>
+        </div>
+      )}
 
       {/* Notice Alert Banner (if unread notices exist) */}
       {unreadCount > 0 && (
@@ -184,11 +217,11 @@ export default function StudentHome({
       {/* Quiz List */}
       <div style={{ display: 'grid', gap: 14 }}>
         {quizzes.map(quiz => {
-          const totalQ = quiz.questions?.length || 0
+          const totalQ = quiz.question_count ?? quiz.questions?.length ?? 0
           const mins = quiz.total_duration_minutes != null
             ? Number(quiz.total_duration_minutes).toFixed(2)
             : String(Math.round(totalQ * ((quiz.time_per_q_sec || quiz.timePerQ || 300) / 60)))
-          const secs = [...new Set((quiz.questions || []).map(q => q.section || 'General'))]
+          const secs = quiz.sections?.length ? quiz.sections.map(x => x.name) : [...new Set((quiz.questions || []).map(q => q.section || 'General'))]
           const availability = getQuizAvailability(quiz)
 
           return (
@@ -270,13 +303,27 @@ export default function StudentHome({
                       View Result →
                     </button>
                   ) : availability.canStart ? (
-                    <button
-                      className="btn-pri"
-                      style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800 }}
-                      onClick={() => onTake(quiz)}
-                    >
-                      Start Test →
-                    </button>
+                    (() => {
+                      const left = resumableSeconds(user?.id, quiz.id)
+                      return (left > 0 || quiz.in_progress) ? (
+                        <button
+                          className="btn-pri"
+                          style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800, background: 'linear-gradient(135deg,#f59e0b,#f97316)' }}
+                          title="Continue where you left off. Your answers are saved."
+                          onClick={() => onTake(quiz)}
+                        >
+                          ▶ Resume Test{left > 0 ? ` · ${Math.floor(left / 60)}m left` : ''}
+                        </button>
+                      ) : (
+                        <button
+                          className="btn-pri"
+                          style={{ fontSize: 14, padding: '8px 20px', fontWeight: 800 }}
+                          onClick={() => onTake(quiz)}
+                        >
+                          Start Test →
+                        </button>
+                      )
+                    })()
                   ) : availability.status === 'scheduled' ? (
                     <button
                       className="btn-sec"

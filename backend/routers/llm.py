@@ -5,7 +5,8 @@ from sqlalchemy.orm import selectinload
 from pydantic import BaseModel
 from database.config import get_db
 from utils.dependencies import get_current_user
-from models.all_models import User, Question
+from models.all_models import User, Question, UserRole
+from crud.session import has_finished_quiz
 from services.llm_service import get_or_generate_explanation
 
 router = APIRouter(prefix="/llm", tags=["LLM"])
@@ -27,5 +28,8 @@ async def explain(
     question = result.scalar_one_or_none()
     if not question:
         raise HTTPException(status_code=404, detail="Question not found")
+    # Explanations reveal the answer: students only get them after submitting that test
+    if user.role != UserRole.admin and not await has_finished_quiz(db, user.id, question.quiz_id):
+        raise HTTPException(status_code=403, detail="Explanations unlock after you submit this test.")
     text = await get_or_generate_explanation(db, question)
     return {"explanation": text}

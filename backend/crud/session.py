@@ -10,45 +10,118 @@ from schemas.session import AttemptSubmit
 from datetime import datetime
 from typing import Optional, List
 import asyncio
-import random
-import string
 import json
 import math
 import re
 
 
-def generate_room_code() -> str:
-    """Generate a unique 6-digit alphanumeric room code."""
-    return "".join(random.choices(string.digits, k=6))
+def _pos_neg(q) -> tuple[float, float]:
+    pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
+    neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
+    return pos, neg
 
 
-async def create_session(db: AsyncSession, quiz_id: str, max_students: int = 100) -> QuizSession:
-    # Ensure unique room code
-    while True:
-        code = generate_room_code()
-        existing = await db.execute(
-            select(QuizSession).where(QuizSession.room_code == code)
-        )
-        if not existing.scalar_one_or_none():
-            break
-
-    session = QuizSession(
-        quiz_id=quiz_id,
-        room_code=code,
-        max_students=max_students,
-    )
-    db.add(session)
-    await db.flush()
-    return session
+def has_answer_key(q) -> bool:
+    """Whether a question has a usable answer key for its type."""
+    t = getattr(q, "question_type", "single_correct") or "single_correct"
+    raw = str(getattr(q, "raw_answer", None) or "").strip()
+    if t == "numerical":
+        return bool(re.search(r"[-+]?\d+(?:\.\d+)?", raw))
+    if t == "multi_correct":
+        return bool(re.search(r"\b[A-Fa-f0-9]\b", raw)) or q.correct_answer is not None
+    return q.correct_answer is not None or (len(raw) == 1 and raw.upper() in "ABCDEF")
 
 
-async def get_session_by_code(db: AsyncSession, room_code: str) -> Optional[QuizSession]:
-    result = await db.execute(
-        select(QuizSession)
-        .options(selectinload(QuizSession.quiz))
-        .where(QuizSession.room_code == room_code)
-    )
-    return result.scalar_one_or_none()
+def evaluate_answer(q, sel_opt, resp_text) -> dict:
+    """
+    Score one answer exactly like a test submission (shared by tests, the mistake
+    notebook and practice sets).
+    Returns {"kind": correct|partial|wrong|skipped, "is_correct": bool, "marks": float}.
+    """
+    pos, neg = _pos_neg(q)
+    q_type = getattr(q, "question_type", "single_correct") or "single_correct"
+
+    if not has_answer_key(q):
+        # No key yet: never penalise. Counted once the admin sets the key (all attempts re-score).
+        return {"kind": "ungraded", "is_correct": False, "marks": 0.0}
+
+    if q_type == "numerical":
+        if resp_text is None or str(resp_text).strip() == "":
+            return {"kind": "skipped", "is_correct": False, "marks": 0.0}
+        val_str = str(resp_text).strip()
+        # at most 2 digits after the decimal point
+        dec_match = re.search(r"\.(\d+)", val_str)
+        student_val = None
+        if not (dec_match and len(dec_match.group(1)) > 2):
+            try:
+                student_val = float(val_str)
+            except ValueError:
+                student_val = None
+        if student_val is None:
+            return {"kind": "wrong", "is_correct": False, "marks": -neg}
+        correct_val = None
+        if q.raw_answer:
+            m = re.search(r"[-+]?\d+(?:\.\d+)?", str(q.raw_answer))
+            if m:
+                try:
+                    correct_val = float(m.group(0))
+                except ValueError:
+                    pass
+        if correct_val is not None and abs(student_val - correct_val) <= 0.01 + 1e-7:
+            return {"kind": "correct", "is_correct": True, "marks": pos}
+        return {"kind": "wrong", "is_correct": False, "marks": -neg}
+
+    if q_type == "multi_correct":
+        selected_set = set()
+        if resp_text is not None and str(resp_text).strip() != "":
+            try:
+                parsed = json.loads(resp_text)
+                if isinstance(parsed, list):
+                    for x in parsed:
+                        if isinstance(x, int):
+                            selected_set.add(x)
+                        elif isinstance(x, str) and x.strip().isdigit():
+                            selected_set.add(int(x.strip()))
+                        elif isinstance(x, str) and len(x.strip()) == 1 and x.strip().upper() in "ABCDEF":
+                            selected_set.add(ord(x.strip().upper()) - ord('A'))
+            except Exception:
+                for t in re.findall(r"\b([A-Fa-f0-9])\b", str(resp_text)):
+                    selected_set.add(int(t) if t.isdigit() else ord(t.upper()) - ord('A'))
+        if sel_opt is not None:
+            selected_set.add(sel_opt)
+        if not selected_set:
+            return {"kind": "skipped", "is_correct": False, "marks": 0.0}
+        correct_set = set()
+        if q.raw_answer:
+            for l in re.findall(r"\b([A-Fa-f0-9])\b", str(q.raw_answer)):
+                correct_set.add(int(l) if l.isdigit() else ord(l.upper()) - ord('A'))
+        if not correct_set and q.correct_answer is not None:
+            correct_set.add(q.correct_answer)
+        if selected_set - correct_set:
+            # any wrong option selected
+            return {"kind": "wrong", "is_correct": False, "marks": -(neg if neg > 0 else 1.0)}
+        tot_corr = len(correct_set) if correct_set else 1
+        marks = float(math.floor(pos * len(selected_set & correct_set) / tot_corr))
+        if selected_set == correct_set:
+            return {"kind": "correct", "is_correct": True, "marks": marks}
+        return {"kind": "partial", "is_correct": False, "marks": marks}
+
+    # single correct, match the column, assertion-reason
+    if sel_opt is None and (resp_text is None or str(resp_text).strip() == ""):
+        return {"kind": "skipped", "is_correct": False, "marks": 0.0}
+    user_idx = sel_opt
+    if user_idx is None and resp_text is not None:
+        t = str(resp_text).strip()
+        if t.isdigit():
+            user_idx = int(t)
+        elif len(t) == 1 and t.upper() in "ABCDEF":
+            user_idx = ord(t.upper()) - ord('A')
+    corr_idx = q.correct_answer
+    if corr_idx is None and q.raw_answer and len(str(q.raw_answer).strip()) == 1 and str(q.raw_answer).strip().upper() in "ABCDEF":
+        corr_idx = ord(str(q.raw_answer).strip().upper()) - ord('A')
+    if user_idx is not None and corr_idx is not None and user_idx == corr_idx:
+        return {"kind": "correct", "is_correct": True, "marks": pos}
+    return {"kind": "wrong", "is_correct": False, "marks": -neg}
 
 
 async def get_session_by_id(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
@@ -58,41 +131,6 @@ async def get_session_by_id(db: AsyncSession, session_id: str) -> Optional[QuizS
         .where(QuizSession.id == session_id)
     )
     return result.scalar_one_or_none()
-
-
-async def start_session(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
-    session = await get_session_by_id(db, session_id)
-    if not session:
-        return None
-    session.status = SessionStatus.active
-    session.started_at = datetime.utcnow()
-    await db.flush()
-    return session
-
-
-async def end_session(db: AsyncSession, session_id: str) -> Optional[QuizSession]:
-    session = await get_session_by_id(db, session_id)
-    if not session:
-        return None
-    session.status = SessionStatus.completed
-    session.ended_at = datetime.utcnow()
-    await db.flush()
-    return session
-
-
-async def get_or_create_attempt(db: AsyncSession, session_id: str, student_id: str) -> Attempt:
-    result = await db.execute(
-        select(Attempt).where(
-            Attempt.session_id == session_id,
-            Attempt.student_id == student_id,
-        )
-    )
-    attempt = result.scalar_one_or_none()
-    if not attempt:
-        attempt = Attempt(session_id=session_id, student_id=student_id)
-        db.add(attempt)
-        await db.flush()
-    return attempt
 
 
 async def get_attempt(db: AsyncSession, session_id: str, student_id: str) -> Optional[Attempt]:
@@ -154,8 +192,10 @@ async def submit_attempt(
     await db.execute(delete(Answer).where(Answer.attempt_id == attempt_id))
 
     score = 0.0
-    total_marks = sum(float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0)) for q in questions)
+    # Questions without an answer key are dropped from the total until the key is set
+    total_marks = sum(_pos_neg(q)[0] for q in questions if has_answer_key(q))
     answer_results: list[dict] = []
+    kinds: dict[str, str] = {}
     correct_count = 0
     incorrect_count = 0
     skipped_count = 0
@@ -166,147 +206,23 @@ async def submit_attempt(
         q = q_map.get(ans_data.question_id)
         if not q:
             continue
-        pos = float(getattr(q, "positive_marks", None) if getattr(q, "positive_marks", None) is not None else (q.marks or 1.0))
-        neg = float(getattr(q, "negative_marks", None) if getattr(q, "negative_marks", None) is not None else 0.0)
-        q_type = getattr(q, "question_type", "single_correct") or "single_correct"
-
         is_marked = bool(getattr(ans_data, "marked_for_review", False))
         if is_marked:
             marked_count += 1
-
-        resp_text = getattr(ans_data, "response_text", None)
-        sel_opt = getattr(ans_data, "selected_option", None)
-
-        if q_type == "numerical":
-            is_answered = (resp_text is not None and str(resp_text).strip() != "")
-            if not is_answered:
-                is_correct = False
-                marks_awarded = 0.0
-                skipped_count += 1
-            else:
-                attempted_count += 1
-                val_str = str(resp_text).strip()
-                # Enforce input restriction: at most 2 digits after decimal
-                dec_match = re.search(r"\.(\d+)", val_str)
-                has_excess_decimals = bool(dec_match and len(dec_match.group(1)) > 2)
-                student_val = None
-                if not has_excess_decimals:
-                    try:
-                        student_val = float(val_str)
-                    except ValueError:
-                        student_val = None
-
-                if student_val is None:
-                    # Invalid numeric format or > 2 decimal places
-                    is_correct = False
-                    marks_awarded = -neg
-                    incorrect_count += 1
-                else:
-                    correct_val = None
-                    if q.raw_answer:
-                        m = re.search(r"[-+]?\d+(?:\.\d+)?", str(q.raw_answer))
-                        if m:
-                            try:
-                                correct_val = float(m.group(0))
-                            except ValueError:
-                                pass
-                    if correct_val is not None and abs(student_val - correct_val) <= 0.01 + 1e-7:
-                        is_correct = True
-                        marks_awarded = pos
-                        correct_count += 1
-                    else:
-                        is_correct = False
-                        marks_awarded = -neg
-                        incorrect_count += 1
-
-        elif q_type == "multi_correct":
-            selected_set = set()
-            if resp_text is not None and str(resp_text).strip() != "":
-                try:
-                    parsed = json.loads(resp_text)
-                    if isinstance(parsed, list):
-                        for x in parsed:
-                            if isinstance(x, int):
-                                selected_set.add(x)
-                            elif isinstance(x, str) and x.strip().isdigit():
-                                selected_set.add(int(x.strip()))
-                            elif isinstance(x, str) and len(x.strip()) == 1 and x.strip().upper() in "ABCDEF":
-                                selected_set.add(ord(x.strip().upper()) - ord('A'))
-                except Exception:
-                    tokens = re.findall(r"\b([A-Fa-f0-9])\b", str(resp_text))
-                    for t in tokens:
-                        if t.isdigit():
-                            selected_set.add(int(t))
-                        else:
-                            selected_set.add(ord(t.upper()) - ord('A'))
-            if sel_opt is not None:
-                selected_set.add(sel_opt)
-
-            if len(selected_set) == 0:
-                # RULE 3 — NO ANSWER: score = 0
-                is_correct = False
-                marks_awarded = 0.0
-                skipped_count += 1
-            else:
-                attempted_count += 1
-                correct_set = set()
-                if q.raw_answer:
-                    letters = re.findall(r"\b([A-Fa-f0-9])\b", str(q.raw_answer))
-                    for l in letters:
-                        if l.isdigit():
-                            correct_set.add(int(l))
-                        else:
-                            correct_set.add(ord(l.upper()) - ord('A'))
-                if not correct_set and q.correct_answer is not None:
-                    correct_set.add(q.correct_answer)
-
-                incorrect_selected = selected_set - correct_set
-                correct_selected = selected_set & correct_set
-
-                # RULE 1 — ANY WRONG OPTION SELECTED
-                if len(incorrect_selected) > 0:
-                    penalty = neg if neg > 0 else 1.0
-                    is_correct = False
-                    marks_awarded = -penalty
-                    incorrect_count += 1
-                else:
-                    # RULE 2 — ONLY CORRECT OPTIONS SELECTED
-                    tot_corr = len(correct_set) if len(correct_set) > 0 else 1
-                    int_score = math.floor(pos * len(correct_selected) / tot_corr)
-                    marks_awarded = float(int_score)
-                    is_correct = (selected_set == correct_set)
-                    if is_correct:
-                        correct_count += 1
-
+        ev = evaluate_answer(q, getattr(ans_data, "selected_option", None), getattr(ans_data, "response_text", None))
+        is_correct, marks_awarded = ev["is_correct"], ev["marks"]
+        kinds[q.id] = ev["kind"]
+        if ev["kind"] == "ungraded":
+            pass  # not scored, not counted
+        elif ev["kind"] == "skipped":
+            skipped_count += 1
         else:
-            # Single Correct, Match the Column, Assertion-Reason
-            is_answered = (sel_opt is not None) or (resp_text is not None and str(resp_text).strip() != "")
-            if not is_answered:
-                is_correct = False
-                marks_awarded = 0.0
-                skipped_count += 1
-            else:
-                attempted_count += 1
-                user_idx = sel_opt
-                if user_idx is None and resp_text is not None:
-                    if str(resp_text).strip().isdigit():
-                        user_idx = int(str(resp_text).strip())
-                    elif len(str(resp_text).strip()) == 1 and str(resp_text).strip().upper() in "ABCDEF":
-                        user_idx = ord(str(resp_text).strip().upper()) - ord('A')
-
-                corr_idx = q.correct_answer
-                if corr_idx is None and q.raw_answer and len(str(q.raw_answer).strip()) == 1 and str(q.raw_answer).strip().upper() in "ABCDEF":
-                    corr_idx = ord(str(q.raw_answer).strip().upper()) - ord('A')
-
-                if user_idx is not None and corr_idx is not None and user_idx == corr_idx:
-                    is_correct = True
-                    marks_awarded = pos
-                    correct_count += 1
-                else:
-                    is_correct = False
-                    marks_awarded = -neg
-                    incorrect_count += 1
-
+            attempted_count += 1
+            if ev["kind"] == "correct":
+                correct_count += 1
+            elif ev["kind"] == "wrong":
+                incorrect_count += 1
+            # "partial" (multi-correct, only correct options chosen) counts as neither, as before
         score += marks_awarded
 
         answer = Answer(
@@ -377,6 +293,18 @@ async def submit_attempt(
                 })
             return existing_att, existing_results
         raise
+
+    # Mistake notebook: every wrong / partial / skipped question (incl. ones never answered)
+    try:
+        from services.notebook_service import record_mistakes
+        for q in questions:
+            kinds.setdefault(q.id, "skipped")
+        kinds = {qid: k for qid, k in kinds.items() if qid in {q.id for q in questions if has_answer_key(q)}}
+        if questions:
+            async with db.begin_nested():  # savepoint: a notebook error can't poison the submission
+                await record_mistakes(db, attempt.student_id, questions[0].quiz_id, attempt.id, kinds)
+    except Exception as e:  # never block a submission on the notebook
+        print(f"[notebook] could not record mistakes: {e}")
 
     # Update leaderboard
     existing_lb = await db.execute(
@@ -456,7 +384,7 @@ async def finalize_expired_attempts_for_student(db: AsyncSession, student_id: st
             end_tz = quiz.availability_end.replace(tzinfo=timezone.utc) if quiz.availability_end.tzinfo is None else quiz.availability_end
             deadline = min(deadline, end_tz)
 
-        if now >= deadline:
+        if now >= deadline + timedelta(minutes=2):
             saved_answers = att.answers or []
             if not saved_answers:
                 # SAFETY: If no answers were ever saved to the database, do not immediately
@@ -619,7 +547,6 @@ async def get_student_attempts(db: AsyncSession, student_id: str) -> List[dict]:
             "rank": att.rank,
             "total_participants": max(1, participants_count),
             "has_solution_pdf": bool(quiz.solution_pdf),
-            "solution_pdf": quiz.solution_pdf,
             "solution_pdf_name": quiz.solution_pdf_name,
             "questions": resolved_questions,
             "answers": answers_dict,
@@ -665,3 +592,114 @@ async def get_leaderboard(db: AsyncSession, session_id: str) -> List[Leaderboard
         .order_by(LeaderboardEntry.rank.asc())
     )
     return list(result.scalars().all())
+
+
+async def has_finished_quiz(db: AsyncSession, student_id: str, quiz_id: str) -> bool:
+    """True once the student has a submitted / auto-submitted attempt for this quiz."""
+    res = await db.execute(
+        select(Attempt.id)
+        .join(QuizSession, Attempt.session_id == QuizSession.id)
+        .where(
+            QuizSession.quiz_id == quiz_id,
+            Attempt.student_id == student_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+        .limit(1)
+    )
+    return res.first() is not None
+
+
+async def autosave_attempt(db: AsyncSession, attempt: Attempt, submission: AttemptSubmit, valid_question_ids: set) -> int:
+    """Replace the attempt's saved (unscored) answers with the latest snapshot."""
+    await db.execute(delete(Answer).where(Answer.attempt_id == attempt.id))
+    n = 0
+    for a in submission.answers:
+        if a.question_id not in valid_question_ids:
+            continue
+        db.add(Answer(
+            attempt_id=attempt.id,
+            question_id=a.question_id,
+            selected_option=a.selected_option,
+            response_text=a.response_text,
+            marked_for_review=bool(a.marked_for_review),
+            is_correct=False,
+            marks_awarded=0.0,
+            time_taken_sec=a.time_taken_sec or 0,
+        ))
+        n += 1
+    attempt.time_taken_sec = int(submission.time_taken_sec or 0)
+    await db.flush()
+    return n
+
+
+async def rescore_quiz(db: AsyncSession, quiz_id: str) -> int:
+    """
+    Re-score every submitted attempt of a quiz with the current answer keys (used
+    after an admin sets a missing key or corrects a wrong one), then refresh
+    leaderboards and ranks. Returns the number of attempts re-scored.
+    """
+    from models.all_models import Quiz
+    quiz = (await db.execute(
+        select(Quiz).options(selectinload(Quiz.questions)).where(Quiz.id == quiz_id)
+    )).scalar_one_or_none()
+    if not quiz:
+        return 0
+    q_map = {q.id: q for q in quiz.questions}
+    total_marks = sum(_pos_neg(q)[0] for q in quiz.questions if has_answer_key(q))
+    attempts = (await db.execute(
+        select(Attempt).options(selectinload(Attempt.answers))
+        .join(QuizSession, Attempt.session_id == QuizSession.id)
+        .where(
+            QuizSession.quiz_id == quiz_id,
+            Attempt.status.in_([AttemptStatus.submitted, AttemptStatus.auto_submitted]),
+        )
+    )).scalars().all()
+    sessions = set()
+    for att in attempts:
+        score = 0.0
+        correct = incorrect = skipped = attempted = 0
+        kinds: dict[str, str] = {}
+        seen = set()
+        for ans in att.answers:
+            q = q_map.get(ans.question_id)
+            if not q:
+                continue
+            seen.add(q.id)
+            ev = evaluate_answer(q, ans.selected_option, ans.response_text)
+            ans.is_correct, ans.marks_awarded = ev["is_correct"], ev["marks"]
+            kinds[q.id] = ev["kind"]
+            if ev["kind"] == "ungraded":
+                continue
+            if ev["kind"] == "skipped":
+                skipped += 1
+                continue
+            attempted += 1
+            correct += ev["kind"] == "correct"
+            incorrect += ev["kind"] == "wrong"
+            score += ev["marks"]
+        for q in quiz.questions:  # questions the student never saw an answer row for
+            if q.id not in seen and has_answer_key(q):
+                skipped += 1
+                kinds[q.id] = "skipped"
+        att.score = score
+        att.total_marks = total_marks
+        att.correct_count, att.incorrect_count, att.skipped_count = correct, incorrect, skipped
+        att.accuracy = round((correct / attempted) * 100, 1) if attempted else 0.0
+        lb = (await db.execute(select(LeaderboardEntry).where(
+            LeaderboardEntry.session_id == att.session_id, LeaderboardEntry.student_id == att.student_id
+        ))).scalar_one_or_none()
+        if lb:
+            lb.score, lb.total_marks, lb.accuracy = score, total_marks, att.accuracy
+        sessions.add(att.session_id)
+        try:
+            from services.notebook_service import record_mistakes
+            async with db.begin_nested():
+                await record_mistakes(db, att.student_id, quiz_id, att.id,
+                                      {k: v for k, v in kinds.items() if has_answer_key(q_map[k])}, reopen=False)
+        except Exception as e:
+            print(f"[notebook] rescore capture failed: {e}")
+    quiz.total_marks = total_marks
+    await db.flush()
+    for sid in sessions:
+        await _recompute_ranks(db, sid)
+    return len(attempts)

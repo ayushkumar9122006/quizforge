@@ -3,14 +3,18 @@ import StudentHome from '../components/Student/StudentHome.jsx'
 import AttemptHistory from '../components/Student/AttemptHistory.jsx'
 import QuizAttempt from '../components/Quiz/QuizAttempt.jsx'
 import Results from '../components/Quiz/Results.jsx'
-import WaitingRoom from '../components/Quiz/WaitingRoom.jsx'
 import AnalyticsDashboard from '../components/Admin/Analytics/AnalyticsDashboard.jsx'
 import CelebrationOverlay from '../components/Quiz/CelebrationOverlay.jsx'
 import NoticeBoard from '../components/Notice/NoticeBoard.jsx'
 import PasswordInput from '../components/Common/PasswordInput.jsx'
-import { useRoom } from '../hooks/useRoom.js'
-import { submitAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
-import { startQuizAttempt } from '../services/quizService.js'
+import { submitAttempt, autosaveAttempt, getLeaderboard, getMyAttempts } from '../services/sessionService.js'
+import { buildAnswerPayload } from '../services/answerPayload.js'
+import { startQuizAttempt, getQuiz, fromApiFormat } from '../services/quizService.js'
+import MyProgress from '../components/Progress/MyProgress.jsx'
+import MistakeNotebook from '../components/Practice/MistakeNotebook.jsx'
+import WeakChapterPractice from '../components/Practice/WeakChapterPractice.jsx'
+import { resumableSeconds, clearAttempt } from '../services/attemptStorage.js'
+import { enterFullscreen, exitFullscreen } from '../services/fullscreen.js'
 import { login as apiLogin } from '../services/authService.js'
 
 function formatIST(dateStr) {
@@ -41,7 +45,6 @@ export default function StudentPage({
 }) {
   const [session, setSession] = useState(null)
   const [leaderboard, setLeaderboard] = useState([])
-  const [inWaiting, setInWaiting] = useState(false)
   const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
 
   // Pre-test instructions modal state
@@ -122,7 +125,6 @@ export default function StudentPage({
           time_taken_sec: item.time_taken_sec,
           totalTimeSpent: item.time_taken_sec,
           auto: item.auto,
-          solution_pdf: item.solution_pdf,
           solution_pdf_name: item.solution_pdf_name,
           has_solution_pdf: item.has_solution_pdf,
           questions: item.questions || [],
@@ -163,76 +165,72 @@ export default function StudentPage({
     }
   }, [screen, viewingAttempt?.session_id, viewingAttempt?.sessionId])
 
-  const room = useRoom(session?.room_code)
-
   // Student clicks Start on a quiz card → show pre-test instruction screen FIRST
   const handleTake = (quiz) => {
-    setInstructionTarget(quiz)
     setStartError(null)
+    // An unfinished attempt on this device → skip the instructions and resume directly
+    if (resumableSeconds(user?.id, quiz.id) > 0 || quiz.in_progress) {
+      handleStartAttemptNow(quiz)
+      return
+    }
+    setInstructionTarget(quiz)
   }
 
-  // Pre-test instruction screen: Student clicks "Start Test Now"
-  const handleStartAttemptNow = async () => {
-    if (!instructionTarget || startingAttempt) return
+  // Pre-test instruction screen: Student clicks "Start Test Now" (or resume from the home card)
+  const handleStartAttemptNow = async (quizArg) => {
+    const target = (quizArg && quizArg.id) ? quizArg : instructionTarget
+    if (!target || startingAttempt) return
+    // Must run inside the click (user gesture) — before any await
+    enterFullscreen()
     setStartingAttempt(true)
     setStartError(null)
 
     try {
-      const resp = await startQuizAttempt(instructionTarget.id)
+      const resp = await startQuizAttempt(target.id)
       setSession({
         id: resp.session_id,
-        room_code: '',
       })
+      // Lists only carry lightweight cards; load the full (student-safe) test now
+      const full = fromApiFormat(await getQuiz(target.id))
 
       // Update quiz effective duration if clamped by closing deadline
       const configuredQuiz = {
-        ...instructionTarget,
+        ...target,
+        ...full,
+        savedAnswers: resp.saved_answers || [],
         effectiveDurationSec: resp.duration_sec,
         effectiveDeadline: resp.effective_deadline,
-        timePerQ: Math.max(1, Math.round(resp.duration_sec / (instructionTarget.questions?.length || 1))),
+        timePerQ: Math.max(1, Math.round(resp.duration_sec / (full.questions?.length || 1))),
       }
 
-      setInWaiting(false)
       onTake(configuredQuiz)
       setInstructionTarget(null)
       setScreen('quiz')
     } catch (err) {
       console.error('Failed to start attempt:', err)
+      exitFullscreen()
       setStartError(err?.response?.data?.detail || 'Failed to start quiz attempt. Please check availability window.')
+      // Test already finished/closed on the server → forget the stale local copy
+      if ([400, 403, 404].includes(err?.response?.status)) clearAttempt(user?.id, target.id)
+      if (!instructionTarget) setInstructionTarget(target)
     } finally {
       setStartingAttempt(false)
     }
   }
+
+  // Autosave from QuizAttempt (every ~30 s and when the tab is hidden)
+  const handleAutosave = useCallback(async (answers, marked, questionTimes, totalTimeSpent) => {
+    if (!activeQuiz || !session) return null
+    const payload = buildAnswerPayload(activeQuiz.questions || [], answers, marked, questionTimes)
+    return autosaveAttempt(session.id, payload, totalTimeSpent)
+  }, [activeQuiz, session])
 
   // Submit attempt from QuizAttempt component
   const handleSubmit = async (answers, auto, marked = new Set(), questionTimes = {}, totalTimeSpent = 0) => {
     if (!activeQuiz || !session) return
     const questions = activeQuiz.questions || []
 
-    const payload = questions.map((q, i) => {
-      const userAns = answers[i]
-      let selectedOption = null
-      let responseText = null
-
-      if (q.question_type === 'numerical') {
-        selectedOption = null
-        responseText = userAns !== undefined && userAns !== null ? String(userAns).trim() : null
-      } else if (q.question_type === 'multi_correct') {
-        selectedOption = null
-        responseText = Array.isArray(userAns) ? JSON.stringify(userAns) : (userAns !== undefined && userAns !== null ? String(userAns) : null)
-      } else {
-        selectedOption = typeof userAns === 'number' ? userAns : null
-        responseText = null
-      }
-
-      return {
-        question_id: q.id,
-        selected_option: selectedOption,
-        response_text: responseText,
-        marked_for_review: marked.has(i),
-        time_taken_sec: questionTimes[i] || 0,
-      }
-    })
+    const payload = buildAnswerPayload(questions, answers, marked, questionTimes)
 
     let attemptResult
     try {
@@ -291,12 +289,13 @@ export default function StudentPage({
       secMap[s].timeSpent += (q.timeSpent || 0)
       const qPos = Number(q.positive_marks ?? q.marks ?? 4)
       secMap[s].totalMarks += qPos
-      if (q.isCorrect) {
-        secMap[s].correct += 1
-        secMap[s].score += (q.marks_awarded !== undefined ? q.marks_awarded : qPos)
-      } else if (q.selectedOption !== undefined && q.selectedOption !== null) {
-        const qNeg = Number(q.negative_marks ?? 0)
-        secMap[s].score -= (q.marks_awarded !== undefined ? Math.abs(q.marks_awarded) : qNeg)
+      if (q.isCorrect) secMap[s].correct += 1
+      // Backend marks are authoritative: covers multi-correct partial credit and
+      // numerical negatives (selectedOption is null for those question types).
+      if (q.marks_awarded !== undefined && q.marks_awarded !== null) {
+        secMap[s].score += Number(q.marks_awarded)
+      } else if (q.isCorrect) {
+        secMap[s].score += qPos
       }
     })
 
@@ -332,7 +331,7 @@ export default function StudentPage({
       sectionBreakdown,
       totalTimeSpent,
       questionTimes,
-      solution_pdf: activeQuiz.solution_pdf,
+      has_solution_pdf: activeQuiz.has_solution_pdf,
       solution_pdf_name: activeQuiz.solution_pdf_name,
     }
 
@@ -379,26 +378,26 @@ export default function StudentPage({
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(115px, 1fr))', gap: 10, marginBottom: 18 }}>
           <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>QUESTIONS</div>
-            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>{instructionTarget.questions?.length || 0} Qs</div>
+            <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>{instructionTarget.question_count ?? instructionTarget.questions?.length ?? 0} Qs</div>
           </div>
           <div style={{ background: '#f8fafc', padding: '10px', borderRadius: 12, border: '1px solid #e2e8f0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#64748b', fontWeight: 800 }}>DURATION</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#111827', marginTop: 2 }}>
               {instructionTarget.total_duration_minutes != null
                 ? `${Number(instructionTarget.total_duration_minutes).toFixed(2)} min`
-                : `~${Math.round((instructionTarget.questions?.length || 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min`}
+                : `~${Math.round((instructionTarget.question_count ?? instructionTarget.questions?.length ?? 0) * ((instructionTarget.time_per_q_sec || instructionTarget.timePerQ || 300) / 60))} min`}
             </div>
           </div>
           <div style={{ background: '#ecfdf5', padding: '10px', borderRadius: 12, border: '1px solid #a7f3d0', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#065f46', fontWeight: 800 }}>CORRECT</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#059669', marginTop: 2 }}>
-              +{instructionTarget.questions?.[0]?.positive_marks ?? 4} marks
+              +{instructionTarget.positive_marks ?? instructionTarget.questions?.[0]?.positive_marks ?? 4} marks
             </div>
           </div>
           <div style={{ background: '#fef2f2', padding: '10px', borderRadius: 12, border: '1px solid #fecaca', textAlign: 'center' }}>
             <div style={{ fontSize: 11, color: '#991b1b', fontWeight: 800 }}>NEGATIVE</div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#dc2626', marginTop: 2 }}>
-              -{instructionTarget.questions?.[0]?.negative_marks ?? 1} marks
+              -{instructionTarget.negative_marks ?? instructionTarget.questions?.[0]?.negative_marks ?? 1} marks
             </div>
           </div>
         </div>
@@ -414,6 +413,8 @@ export default function StudentPage({
           <div style={{ fontWeight: 800, color: '#0f172a', marginBottom: 8, fontSize: 14 }}>Rules & Guidelines:</div>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             <li><strong>Timer starts immediately</strong> upon clicking "Start Test Now".</li>
+            <li><strong>Fullscreen:</strong> the test opens in fullscreen. Leaving fullscreen or switching tabs counts as a strike; <strong>3 strikes auto-submit</strong>.</li>
+            <li><strong>Autosave:</strong> answers are saved on this device instantly and to the server every 30 seconds. If your connection drops, keep going.</li>
             <li><strong>Clear Response:</strong> Use the "Clear Response" button anytime to deselect an answer without affecting your "Mark for Review" status.</li>
             <li><strong>Mark for Review:</strong> You can mark questions for later review and return to them using the question palette.</li>
             <li><strong>Scoring:</strong> Correct answers receive positive marks. Incorrect answers receive negative marks penalty. Unanswered/skipped questions carry zero penalty.</li>
@@ -457,7 +458,7 @@ export default function StudentPage({
             type="button"
             className="btn-pri"
             style={{ flex: 2, padding: '12px', fontSize: 15, fontWeight: 900 }}
-            onClick={handleStartAttemptNow}
+            onClick={() => handleStartAttemptNow()}
             disabled={startingAttempt}
           >
             {startingAttempt ? 'Starting Test…' : 'Start Test Now →'}
@@ -467,27 +468,14 @@ export default function StudentPage({
     </div>
   )
 
-  // Waiting room if needed
-  if (screen === 'quiz' && inWaiting && session && activeQuiz) return (
-    <WaitingRoom
-      session={session}
-      quiz={activeQuiz}
-      userRole="student"
-      onQuizStart={() => setInWaiting(false)}
-      onLeave={() => { setInWaiting(false); setSession(null); setScreen('home') }}
-      connected={room.connected}
-      participants={room.participants}
-      quizStarted={room.quizStarted}
-      recentSubmit={room.recentSubmit}
-    />
-  )
-
   if (screen === 'home') return (
     <>
       <StudentHome
         user={user}
         onTake={handleTake}
         onHistory={() => setScreen('history')}
+        onProgress={() => setScreen('progress')}
+        onNotebook={() => setScreen('notebook')}
         onAnalytics={quiz => { setAnalyticsQuiz(quiz); setScreen('analytics') }}
         onLogout={onLogout}
         attempts={attempts}
@@ -501,6 +489,22 @@ export default function StudentPage({
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
     </>
+  )
+
+  if (screen === 'progress') return (
+    <MyProgress
+      onBack={() => setScreen('home')}
+      onPractice={() => setScreen('practice')}
+      onNotebook={() => setScreen('notebook')}
+    />
+  )
+
+  if (screen === 'notebook') return (
+    <MistakeNotebook onBack={() => setScreen('home')} onPractice={() => setScreen('practice')} />
+  )
+
+  if (screen === 'practice') return (
+    <WeakChapterPractice onBack={() => setScreen('home')} onNotebook={() => setScreen('notebook')} />
   )
 
   if (screen === 'notices') return (
@@ -519,7 +523,7 @@ export default function StudentPage({
 
   if (screen === 'quiz' && activeQuiz) return (
     <>
-      <QuizAttempt quiz={activeQuiz} userName={user?.name} onSubmit={handleSubmit} />
+      <QuizAttempt quiz={activeQuiz} userName={user?.name} userId={user?.id} onSubmit={handleSubmit} onAutosave={handleAutosave} />
       {celebrationResult && (
         <CelebrationOverlay result={celebrationResult} onDone={handleFinishCelebration} />
       )}
@@ -576,13 +580,14 @@ export default function StudentPage({
       quiz={{
         ...activeQuiz,
         questions: currentResult.questions || activeQuiz.questions,
-        solution_pdf: currentResult.solution_pdf || activeQuiz.solution_pdf,
+        has_solution_pdf: currentResult.has_solution_pdf || activeQuiz.has_solution_pdf,
         solution_pdf_name: currentResult.solution_pdf_name || activeQuiz.solution_pdf_name
       }}
       result={currentResult}
       leaderboard={leaderboard}
       currentUserId={user?.id}
       currentUserName={user?.name}
+      onOpenProgress={() => setScreen('progress')}
       onBack={() => setScreen('home')}
       onHome={() => setScreen('home')}
     />
@@ -602,7 +607,7 @@ export default function StudentPage({
         id: viewingAttempt.quizId || viewingAttempt.quiz_id,
         title: viewingAttempt.quizTitle || viewingAttempt.quiz_title,
         questions: viewingAttempt.questions || [],
-        solution_pdf: viewingAttempt.solution_pdf,
+        has_solution_pdf: viewingAttempt.has_solution_pdf,
         solution_pdf_name: viewingAttempt.solution_pdf_name,
       }}
       result={{
@@ -624,13 +629,14 @@ export default function StudentPage({
         sectionBreakdown: viewingAttempt.sectionBreakdown,
         totalTimeSpent: viewingAttempt.totalTimeSpent || viewingAttempt.time_taken_sec || 0,
         questionTimes: viewingAttempt.questionTimes || {},
-        solution_pdf: viewingAttempt.solution_pdf,
+        has_solution_pdf: viewingAttempt.has_solution_pdf,
         solution_pdf_name: viewingAttempt.solution_pdf_name,
         questions: viewingAttempt.questions || [],
       }}
       leaderboard={leaderboard}
       currentUserId={user?.id}
       currentUserName={user?.name}
+      onOpenProgress={() => setScreen('progress')}
       onBack={() => setScreen('history')}
       onHome={() => setScreen('home')}
     />

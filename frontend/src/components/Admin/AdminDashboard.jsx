@@ -4,15 +4,14 @@ import {
   createQuiz, publishQuiz, toApiFormat, uploadSolutionPdf,
   deleteSolutionPdf, viewSolutionPdf, confirmBulkImport, updateQuizAvailability
 } from '../../services/quizService.js'
-import { createSession, endSession } from '../../services/sessionService.js'
 import SectionConfig from './SectionConfig.jsx'
 import QuestionEditor from './QuestionEditor.jsx'
-import LiveSessionMonitor from './LiveSessionMonitor.jsx'
-import { useRoom } from '../../hooks/useRoom.js'
 import AnalyticsDashboard from './Analytics/AnalyticsDashboard.jsx'
 import PdfUploadModal from './BulkImport/PdfUploadModal.jsx'
 import QuestionReviewScreen from './BulkImport/QuestionReviewScreen.jsx'
 import AdminNoticeManager from './AdminNoticeManager.jsx'
+import BatchInsights from './BatchInsights.jsx'
+import ChapterTagger from './ChapterTagger.jsx'
 
 function formatIST(dateStr) {
   if (!dateStr) return 'Open / No deadline'
@@ -64,9 +63,8 @@ export default function AdminDashboard({ onLogout }) {
   const [draftMeta, setDraftMeta] = useState(null)
   const [saving, setSaving] = useState(false)
   const [saveErr, setSaveErr] = useState(null)
-  const [activeSession, setActiveSession] = useState(null)
-  const [activeQuiz, setActiveQuiz] = useState(null)
   const [analyticsQuiz, setAnalyticsQuiz] = useState(null)
+  const [taggingQuizId, setTaggingQuizId] = useState(null)
   const [uploadingPdfQuizId, setUploadingPdfQuizId] = useState(null)
   const [showBulkModal, setShowBulkModal] = useState(false)
   const [bulkTargetQuizId, setBulkTargetQuizId] = useState(null)
@@ -82,8 +80,6 @@ export default function AdminDashboard({ onLogout }) {
 
   const pdfInputRef = useRef(null)
   const targetPdfQuizId = useRef(null)
-
-  const room = useRoom(activeSession?.room_code)
 
   const handleConfigDone = (questions, title, totalDurationMin, instructions, solutionPdf, solutionPdfName, availabilityStart, availabilityEnd) => {
     setDraftQ(questions)
@@ -198,15 +194,6 @@ export default function AdminDashboard({ onLogout }) {
     } finally {
       setSavingAvail(false)
     }
-  }
-
-  const handleLeaveRoom = async () => {
-    if (activeSession) {
-      try { await endSession(activeSession.id) } catch {}
-    }
-    setActiveSession(null)
-    setActiveQuiz(null)
-    setScreen('dash')
   }
 
   const handleAnalytics = (quiz) => {
@@ -325,20 +312,6 @@ export default function AdminDashboard({ onLogout }) {
     />
   )
 
-  if (screen === 'room' && activeSession && activeQuiz) return (
-    <LiveSessionMonitor
-      session={activeSession}
-      quiz={activeQuiz}
-      onLeave={handleLeaveRoom}
-      connected={room.connected}
-      participants={room.participants}
-      count={room.count}
-      quizStarted={room.quizStarted}
-      recentSubmit={room.recentSubmit}
-      leaderboard={room.leaderboard}
-    />
-  )
-
   if (screen === 'analytics' && analyticsQuiz) return (
     <AnalyticsDashboard
       quiz={analyticsQuiz}
@@ -348,6 +321,14 @@ export default function AdminDashboard({ onLogout }) {
 
   if (screen === 'notices') return (
     <AdminNoticeManager onBack={() => setScreen('dash')} />
+  )
+
+  if (screen === 'batch') return (
+    <BatchInsights onBack={() => setScreen('dash')} />
+  )
+
+  if (screen === 'chapters' && taggingQuizId) return (
+    <ChapterTagger quizId={taggingQuizId} onBack={() => { setScreen('dash'); setTaggingQuizId(null); reload() }} />
   )
 
   // ── Dashboard ────────────────────────────────────────────────────────────────
@@ -477,6 +458,13 @@ export default function AdminDashboard({ onLogout }) {
           <button className="btn-sec" onClick={onLogout}>Sign out</button>
           <button
             className="btn-sec"
+            style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#4338ca', borderColor: '#c7d2fe', background: '#eef2ff', fontWeight: 800 }}
+            onClick={() => setScreen('batch')}
+          >
+            👥 Students & Progress
+          </button>
+          <button
+            className="btn-sec"
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
             onClick={() => setScreen('notices')}
           >
@@ -520,9 +508,10 @@ export default function AdminDashboard({ onLogout }) {
       {/* Quizzes List */}
       <div style={{ display: 'grid', gap: 14 }}>
         {quizzes.map(quiz => {
-          const hasPdf = Boolean(quiz.solution_pdf || quiz.solution_pdf_name)
+          const hasPdf = Boolean(quiz.has_solution_pdf || quiz.solution_pdf_name)
           const isBusy = uploadingPdfQuizId === quiz.id
           const hasWindow = Boolean(quiz.availability_start || quiz.availability_end)
+          const untaggedCount = quiz.untagged_count ?? (quiz.questions || []).filter(q => !q.chapter).length
 
           return (
             <div key={quiz.id} className="quiz-row" style={{ flexWrap: 'wrap', gap: 12, padding: '1.2rem 1.4rem' }}>
@@ -533,8 +522,8 @@ export default function AdminDashboard({ onLogout }) {
                   {quiz.title}
                 </div>
                 <div style={{ fontSize: 12, color: '#64748b', display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center', marginBottom: 4 }}>
-                  <span>📝 {quiz.questions?.length ?? 0} Qs</span>
-                  <span>⏱ {quiz.total_duration_minutes != null ? `${Number(quiz.total_duration_minutes).toFixed(2)} min (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.questions?.length || 1))).toFixed(2)} min/q)` : `${Math.round((quiz.time_per_q_sec || 300) / 60)} min/q`}</span>
+                  <span>📝 {quiz.question_count ?? quiz.questions?.length ?? 0} Qs</span>
+                  <span>⏱ {quiz.total_duration_minutes != null ? `${Number(quiz.total_duration_minutes).toFixed(2)} min (${Number(quiz.time_per_question_min ?? (quiz.total_duration_minutes / (quiz.question_count || quiz.questions?.length || 1))).toFixed(2)} min/q)` : `${Math.round((quiz.time_per_q_sec || 300) / 60)} min/q`}</span>
                   <span>📅 Created {new Date(quiz.created_at).toLocaleDateString()}</span>
                   {hasPdf && (
                     <span style={{ color: '#059669', fontWeight: 800, background: '#ecfdf5', padding: '1px 8px', borderRadius: 6, border: '1px solid #a7f3d0' }}>
@@ -561,7 +550,7 @@ export default function AdminDashboard({ onLogout }) {
               </span>
 
               {/* Action Buttons */}
-              <div style={{ display: 'flex', gap: 7, flexShrink: 0, flexWrap: 'wrap', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: 7, flexShrink: 0, maxWidth: '100%', flexWrap: 'wrap', alignItems: 'center' }}>
                 {/* Feature 2: Edit Availability */}
                 <button
                   className="btn-sec"
@@ -621,6 +610,24 @@ export default function AdminDashboard({ onLogout }) {
                 >
                   ⚡ +PDF Qs
                 </button>
+                <button
+                  className="btn-sec"
+                  style={{ fontSize: 12, padding: '6px 11px', ...(untaggedCount > 0 ? { color: '#b45309', borderColor: '#fcd34d', background: '#fffbeb', fontWeight: 800 } : {}) }}
+                  title="Tag questions with subject + chapter for weak-chapter analysis"
+                  onClick={() => { setTaggingQuizId(quiz.id); setScreen('chapters') }}
+                >
+                  🏷 Chapters{untaggedCount > 0 ? ` (${untaggedCount} untagged)` : ''}
+                </button>
+                {quiz.missing_key_count > 0 && (
+                  <button
+                    className="btn-sec"
+                    style={{ fontSize: 12, padding: '6px 11px', color: '#b91c1c', borderColor: '#fca5a5', background: '#fef2f2', fontWeight: 800 }}
+                    title="These questions are not scored until you set their answer key"
+                    onClick={() => { setTaggingQuizId(quiz.id); setScreen('chapters') }}
+                  >
+                    🔑 {quiz.missing_key_count} missing answer key{quiz.missing_key_count !== 1 ? 's' : ''}
+                  </button>
+                )}
                 <button
                   className="btn-sec"
                   style={{ fontSize: 12, padding: '6px 11px' }}

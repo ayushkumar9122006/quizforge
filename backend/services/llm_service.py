@@ -63,55 +63,59 @@ async def get_or_generate_explanation(
     return text
 
 
-async def find_correct_answer(question: Question) -> int:
+async def find_correct_answer(question: Question):
     """
-    Ask the LLM which option is correct.
-    Returns 0-based index. Falls back to 0 on failure.
-    For image-only questions/options, returns None so it stays unresolved.
+    Ask the LLM which option is correct. Returns a 0-based index, or None when the
+    AI is unavailable or its reply is unusable — never a guessed default, because a
+    wrong key silently corrupts every student's score and analysis.
     """
-    opts = [o.text for o in sorted(question.options, key=lambda x: x.order_index)]
-
+    from database.config import settings
+    if not settings.openrouter_api_key:
+        return None
+    opts = [o.text or "" for o in sorted(question.options, key=lambda x: x.order_index)]
     q_text = (question.text or "").strip()
-    opt_texts = [o.strip() for o in opts]
-    if not q_text and all(not t for t in opt_texts):
-        return 0
-
-    opts_lines = "\n".join(
-        f"{chr(65+i)}) {o if o.strip() else '[image option]'}"
-        for i, o in enumerate(opts)
-    )
-
+    if len(opts) < 2 or (not q_text and all(not t.strip() for t in opts)):
+        return None  # image-only: the model cannot see it
+    letters = [chr(65 + i) for i in range(len(opts))]
+    opts_lines = "\n".join(f"{letters[i]}) {o if o.strip() else '[image option]'}" for i, o in enumerate(opts))
     prompt = (
         f"You are an expert exam evaluator.\n\n"
         f"Question: {question.text}\nOptions:\n{opts_lines}\n\n"
-        "Which option is correct? Reply with ONLY a single letter: A, B, C, or D. Nothing else."
+        f"Which option is correct? Reply with ONLY a single letter: {', '.join(letters)}. Nothing else."
     )
-
     try:
         raw = await call_openrouter([{"role": "user", "content": prompt}], max_tokens=5)
-        letter = re.sub(r"[^A-D]", "", raw.strip().upper())[:1]
-        return ["A", "B", "C", "D"].index(letter) if letter else 0
     except Exception:
-        return 0
+        return None
+    letter = re.sub(r"[^A-F]", "", (raw or "").strip().upper())[:1]
+    return letters.index(letter) if letter in letters else None
+
+
+SINGLE_KEY_TYPES = ("single_correct", "assertion_reason", "match_column")
 
 
 async def resolve_unset_answers(db: AsyncSession, questions: list) -> None:
     """
-    For questions where correct_answer is None,
-    call LLM to determine and save it permanently.
+    For single-answer questions saved without a key, ask the AI once and store the
+    result. Numerical / multi-correct questions use raw_answer and are never
+    guessed. If the AI can't answer, the question stays ungraded (no marks, no
+    penalty) until an admin sets the key — which re-scores every attempt.
     """
-    # Ensure options are loaded
-    unset = [q for q in questions if q.correct_answer is None]
+    from crud.session import has_answer_key
+    unset = [
+        q for q in questions
+        if (q.question_type or "single_correct") in SINGLE_KEY_TYPES and not has_answer_key(q)
+    ]
+    changed = False
     for q in unset:
-        # load options if not already loaded
         if not q.options:
             result = await db.execute(
-                select(Question)
-                .options(selectinload(Question.options))
-                .where(Question.id == q.id)
+                select(Question).options(selectinload(Question.options)).where(Question.id == q.id)
             )
-            q = result.scalar_one_or_none()
+            q = result.scalar_one_or_none() or q
         idx = await find_correct_answer(q)
-        q.correct_answer = idx
-    if unset:
+        if idx is not None:
+            q.correct_answer = idx
+            changed = True
+    if changed:
         await db.flush()

@@ -4,11 +4,6 @@ from typing import Optional, List
 from models.all_models import SessionStatus, AttemptStatus
 
 
-class SessionCreate(BaseModel):
-    quiz_id: str
-    max_students: int = 100
-
-
 class SessionOut(BaseModel):
     id: str
     quiz_id: str
@@ -20,10 +15,6 @@ class SessionOut(BaseModel):
     max_students: int
 
     model_config = {"from_attributes": True}
-
-
-class JoinSessionRequest(BaseModel):
-    room_code: str
 
 
 class AnswerSubmit(BaseModel):
@@ -127,6 +118,14 @@ class StudentAttemptHistoryItemOut(BaseModel):
     question_times: dict = {}
 
 
+class SavedAnswerOut(BaseModel):
+    question_id: str
+    selected_option: Optional[int] = None
+    response_text: Optional[str] = None
+    marked_for_review: bool = False
+    time_taken_sec: int = 0
+
+
 class StartQuizResponse(BaseModel):
     session_id: str
     attempt_id: str
@@ -135,4 +134,11 @@ class StartQuizResponse(BaseModel):
     started_at: datetime
     resumed: bool = False
     effective_deadline: Optional[datetime] = None
+    # answers autosaved to the server (lets a student resume on another device)
+    saved_answers: List[SavedAnswerOut] = []
+
+
+class AutosaveOut(BaseModel):
+    saved: int
+    saved_at: datetime
 

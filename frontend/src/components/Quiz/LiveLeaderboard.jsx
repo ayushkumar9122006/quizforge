@@ -3,8 +3,8 @@ import { formatDuration } from '../../services/utils.js'
 /**
  * LiveLeaderboard — real-time leaderboard shown after quiz ends
  * or during quiz (admin view).
- * Receives leaderboard data via WebSocket through useRoom,
- * or falls back to HTTP polling via prop.
+ * Receives the post-test leaderboard (GET /sessions/{id}/leaderboard)
+ * via props.
  */
 export default function LiveLeaderboard({
   entries = [],

@@ -11,9 +11,31 @@ from models.all_models import (
     LeaderboardEntry, QuizStatus, AttemptStatus
 )
 from crud.quiz import create_quiz, publish_quiz, delete_quiz, get_quiz
-from crud.session import (
-    create_session, start_session, submit_attempt, get_student_attempts, get_or_create_attempt
-)
+from crud.session import submit_attempt, get_student_attempts
+import secrets
+
+
+async def create_session(db, quiz_id):
+    """Test helper: an active session, as start-attempt creates (room codes were removed)."""
+    s = QuizSession(quiz_id=quiz_id, room_code=secrets.token_hex(3).upper(), status="active")
+    db.add(s)
+    await db.flush()
+    return s
+
+
+async def start_session(db, session_id):
+    return None
+
+
+async def get_or_create_attempt(db, session_id, student_id):
+    from sqlalchemy import select as _select
+    res = await db.execute(_select(Attempt).where(Attempt.session_id == session_id, Attempt.student_id == student_id))
+    att = res.scalar_one_or_none()
+    if not att:
+        att = Attempt(session_id=session_id, student_id=student_id)
+        db.add(att)
+        await db.flush()
+    return att
 from schemas.quiz import QuizCreate, QuestionCreate, OptionCreate
 from schemas.session import AttemptSubmit, AnswerSubmit
 from services.response_sheet_service import generate_response_sheet_pdf

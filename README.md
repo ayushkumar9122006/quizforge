@@ -17,11 +17,23 @@
 
 QuizForge is a full-stack, real-time quiz platform:
 
-- **Admins** create quizzes (manual questions or OCR-scanned from photos, powered by Tesseract.js in the browser), publish them, and host live sessions behind a 6-digit room code.
-- **Students** join a session with the room code, wait in a live Waiting Room, take the quiz against a timer, and see the leaderboard update in real time as classmates submit.
+- **Admins** create quizzes (manual, OCR-scanned from photos, or bulk-imported from PDFs), tag chapters, and publish them with an availability window.
+- **Students** start published tests directly within the window (fullscreen, autosaved), then get rank, percentile, chapter-wise mistakes and a long-term progress dashboard.
 - **AI** (via OpenRouter) generates answer explanations and resolves any question left without a marked correct answer — resolved once, server-side, and reused everywhere so every student and the admin's leaderboard/analytics always agree.
 
-**Stack:** FastAPI (async SQLAlchemy 2.0) · PostgreSQL 16 · Alembic migrations · JWT auth · native WebSockets · React 18 + Vite · Recharts.
+**Stack:** FastAPI (async SQLAlchemy 2.0) · PostgreSQL 16 · Alembic migrations · JWT auth · React 18 + Vite · Recharts · installable PWA.
+
+### Built for improving JEE marks
+- **Mistake notebook** with spaced re-attempts (3 / 7 / 21 days, mastered after two correct in a row).
+- **Practice my weak chapters**: one click, 15–20 questions, instant feedback.
+- **Time strategy, easy-question mistakes and a target tracker** with an estimated JEE Main percentile.
+- **Autosave every 30 s**, resume on any device, **installable app** with **fullscreen test mode**.
+- Optional **Cloudinary** image storage (`CLOUDINARY_URL`), with `backend/migrate_images_to_cloudinary.py` for existing images.
+- **Daily streak and goal, 16 badges, and a most-improved leaderboard** that ranks students by how much they improved, not by the top score.
+- **Answer keys are never guessed**: questions without a key are ungraded until the admin sets it; setting or fixing a key re-scores every attempt.
+
+### JEE progress analytics
+Every question carries a **subject** and a **JEE syllabus chapter**: the AI suggests and the admin confirms. From that, students get a **My Progress** dashboard showing whether they are improving test after test, which chapters they keep getting wrong, and what to revise next. Every result screen shows rank, percentile, subject-wise rank and where the marks were lost. Admins get a **Students & Progress** view with per-student drill-down and the chapters the whole batch struggles with. See `docs/API.md → Progress Analytics`.
 
 ---
 
@@ -66,6 +78,8 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 | `OPENROUTER_MODEL` | Model slug used for LLM calls | `meta-llama/llama-3.1-8b-instruct:free` |
 | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
 | `UPLOAD_DIR` | Directory for static file mounts (auto-created on boot) | `uploads` |
+| `CLOUDINARY_URL` | `cloudinary://<api_key>:<api_secret>@<cloud_name>`. When set, question/option images are stored on Cloudinary instead of the DB | *(unset)* |
+| `STREAK_TIMEZONE` | Time zone that decides when a streak day starts | `Asia/Kolkata` |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Used by `seed.py` | see `.env.example` |
 | `SEED_STUDENT_EMAIL` / `SEED_STUDENT_PASSWORD` | Used by `seed.py` | see `.env.example` |
 
@@ -103,7 +117,7 @@ alembic revision -m "describe your change"
 alembic downgrade -1
 ```
 
-The migration chain is `0001` (initial schema) → `0002` (widen image columns) → `0003` (drop orphan enum types). All three are required — always run `alembic upgrade head`, not just `0001`.
+The migration chain runs `0001` → `0011` (`0010` question subject/chapter, `0011` targets, mistake notebook and practice). Always run `alembic upgrade head`.
 
 Optionally seed a demo admin/student:
 ```bash

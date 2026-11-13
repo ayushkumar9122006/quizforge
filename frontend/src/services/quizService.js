@@ -106,6 +106,9 @@ export function toApiFormat(frontendQuiz, totalDurationMin = null, fallbackTimeP
       return {
         order_index:    i,
         section:        q.section || 'General',
+        subject:        q.subject || null,
+        chapter:        q.chapter || null,
+        chapter_source: q.chapter ? (q.chapter_source || 'admin') : null,
         text:           q.text || '',
         question_image: qImg,
         content_type:   qImg ? (q.text ? 'both' : 'image') : 'text',
@@ -181,6 +184,19 @@ export function sortQuestionsBySection(questionsList) {
   return sorted
 }
 
+// Lightweight quiz card from GET /quizzes/published or /quizzes/my (no questions)
+export function fromApiSummary(s) {
+  return {
+    ...s,
+    published:        s.status === 'published',
+    timePerQ:         s.time_per_q_sec,
+    createdAt:        s.created_at,
+    questions:        [],
+    question_count:   s.question_count || 0,
+    has_solution_pdf: Boolean(s.has_solution_pdf),
+  }
+}
+
 // Convert backend API format → frontend format
 export function fromApiFormat(apiQuiz) {
   return {
@@ -188,9 +204,10 @@ export function fromApiFormat(apiQuiz) {
     title:             apiQuiz.title,
     description:       apiQuiz.description,
     instructions:      apiQuiz.instructions,
-    solution_pdf:      apiQuiz.solution_pdf,
     solution_pdf_name: apiQuiz.solution_pdf_name,
-    has_solution_pdf:  Boolean(apiQuiz.solution_pdf),
+    has_solution_pdf:  Boolean(apiQuiz.has_solution_pdf ?? apiQuiz.solution_pdf),
+    total_duration_minutes: apiQuiz.total_duration_minutes,
+    time_per_q_sec:    apiQuiz.time_per_q_sec,
     availability_start: apiQuiz.availability_start,
     availability_end:   apiQuiz.availability_end,
     published:         apiQuiz.status === 'published',
@@ -201,6 +218,9 @@ export function fromApiFormat(apiQuiz) {
       text:           q.text,
       qImage:         q.question_image,
       section:        q.section || 'General',
+      subject:        q.subject || null,
+      chapter:        q.chapter || null,
+      chapter_source: q.chapter_source || null,
       correct:        q.correct_answer,
       explanation:    q.explanation,
       marks:          q.positive_marks !== undefined ? q.positive_marks : (q.marks || 1),
@@ -246,6 +266,9 @@ export async function confirmBulkImport(quizId, questions) {
       return {
         order_index: i,
         section: q.section || 'General',
+        subject: q.subject || null,
+        chapter: q.chapter || null,
+        chapter_source: q.chapter ? (q.chapter_source || 'admin') : null,
         text: q.text || '',
         question_image: q.question_image || q.qImage || null,
         content_type: (q.question_image || q.qImage) ? (q.text ? 'both' : 'image') : 'text',

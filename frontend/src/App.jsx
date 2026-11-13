@@ -14,6 +14,9 @@ export default function App() {
   const [attempts,      setAttempts]       = useState([])
   const [viewingAttempt,setViewingAttempt] = useState(null)
   const [unreadNoticesCount, setUnreadNoticesCount] = useState(0)
+  const [confirmLeave, setConfirmLeave] = useState(false)
+  // While a student is writing a test, the top bar must not navigate away from it
+  const inTest = user?.role === 'student' && screen === 'quiz'
 
   const fetchUnreadCount = useCallback(async () => {
     if (user?.role === 'student') {
@@ -70,7 +73,11 @@ export default function App() {
       {/* Global nav — only when logged in */}
       {user && (
         <nav style={{ background:'#fff', borderBottom:'1px solid #f3f4f6', padding:'0 22px', display:'flex', alignItems:'center', justifyContent:'space-between', height:52, position:'sticky', top:0, zIndex:100 }}>
-          <div onClick={() => setScreen('home')} style={{ display:'flex', alignItems:'center', gap:9, cursor:'pointer' }}>
+          <div
+            onClick={() => { if (!inTest) setScreen('home') }}
+            title={inTest ? 'Finish or submit the test to leave this page' : 'Home'}
+            style={{ display:'flex', alignItems:'center', gap:9, cursor: inTest ? 'default' : 'pointer' }}
+          >
             <div style={{ width:29,height:29,borderRadius:8,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:14 }}>📝</div>
             <span style={{ fontWeight:800,fontSize:15,background:'linear-gradient(135deg,#6366f1,#8b5cf6)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent' }}>QuiZee</span>
           </div>
@@ -83,7 +90,7 @@ export default function App() {
               <span className={`tag ${user.role==='admin'?'tag-purple':'tag-green'}`} style={{ fontSize:10 }}>{user.role}</span>
             </div>
 
-            {user.role === 'student' && (
+            {user.role === 'student' && !inTest && (
               <button
                 id="navbar-notice-bell"
                 onClick={() => setScreen('notices')}
@@ -136,9 +143,25 @@ export default function App() {
             {screen !== 'home' && screen !== 'quiz' && (
               <button className="btn-sec" style={{ fontSize:12,padding:'5px 11px' }} onClick={() => setScreen('home')}>Home</button>
             )}
-            <button className="btn-ghost" style={{ fontSize:12 }} onClick={handleLogout}>Sign out</button>
+            <button className="btn-ghost" style={{ fontSize:12 }} onClick={() => (inTest ? setConfirmLeave(true) : handleLogout())}>Sign out</button>
           </div>
         </nav>
+      )}
+
+      {confirmLeave && (
+        <div role="dialog" aria-modal="true" style={{ position:'fixed', inset:0, background:'rgba(10,10,25,.6)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:9500, padding:16 }}>
+          <div style={{ background:'#fff', borderRadius:18, padding:'1.6rem', maxWidth:420, width:'100%', boxShadow:'0 20px 60px rgba(0,0,0,.3)' }}>
+            <div style={{ fontSize:34, textAlign:'center', marginBottom:8 }}>⏳</div>
+            <h3 style={{ margin:'0 0 8px', fontSize:18, fontWeight:800, textAlign:'center' }}>Your test is still running</h3>
+            <p style={{ color:'#4b5563', fontSize:13.5, textAlign:'center', margin:'0 0 18px', lineHeight:1.55 }}>
+              If you sign out, the timer keeps running. Your answers stay saved on this device. Log back in and press <b>Resume Test</b> before time runs out.
+            </p>
+            <div style={{ display:'flex', gap:10 }}>
+              <button className="btn-pri" style={{ flex:1 }} onClick={() => setConfirmLeave(false)}>Back to test</button>
+              <button className="btn-sec" style={{ flex:1, color:'#dc2626', borderColor:'#fca5a5' }} onClick={() => { setConfirmLeave(false); handleLogout() }}>Sign out anyway</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Screens */}

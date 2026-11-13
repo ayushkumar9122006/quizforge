@@ -214,6 +214,12 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
 
     # 4. Map correct answer letter to 0-based index or format multi/numerical answers
     correct_idx = None
+    # A bare number is a numerical answer unless the question has options to point at
+    # (e.g. "Answer: 4" with no options is the value 4, not option D; "2.5" is never letters)
+    if correct_raw and re.fullmatch(r"[-+]?\d+(?:\.\d+)?", correct_raw.strip()) and (
+        not options or "." in correct_raw or len(correct_raw.strip().lstrip("+-")) > 1
+    ):
+        return _clean_text(statement), options, None, correct_raw.strip(), explanation
     if correct_raw:
         # Check for multi-letter pattern like A, B, C or A,B
         multi_letters = [l.upper() for l in re.findall(r"\b([a-fA-F1-6])\b", correct_raw)]
@@ -297,7 +303,8 @@ async def analyze_pdf(
     filename: str = "questions.pdf",
     default_pos_marks: float = 4.0,
     default_neg_marks: float = 1.0,
-    default_section: str = "General"
+    default_section: str = "General",
+    default_subject: Optional[str] = None,
 ) -> BulkImportAnalyzeResponse:
     """
     Main entry point: Analyzes uploaded PDF with hybrid PyMuPDF engine,
@@ -338,6 +345,36 @@ async def analyze_pdf(
 
     # Sort starts in natural order
     question_starts.sort(key=lambda s: (s[0], s[1]))
+
+    # ── 1b. Subject headings (e.g. "PART A – PHYSICS", "CHEMISTRY") ────────────
+    # Full-syllabus papers are split by subject; remember where each starts so
+    # every question inherits the subject heading printed above it.
+    from services.jee_syllabus import normalize_subject, infer_subject
+    subject_marks: List[Tuple[int, float, str]] = []
+    subj_heading_re = re.compile(
+        r"^(?:(?:PART|SECTION|SUBJECT)\s*[-–:]?\s*[A-C1-3]?\s*[-–:.]?\s*)?(PHYSICS|CHEMISTRY|MATHEMATICS|MATHS)\b",
+        re.IGNORECASE,
+    )
+    for p_idx in range(total_pages):
+        for b in doc[p_idx].get_text("blocks"):
+            if b[6] != 0:
+                continue
+            txt = b[4].strip()
+            if len(txt) <= 60:
+                hm = subj_heading_re.match(txt)
+                if hm:
+                    subject_marks.append((p_idx, b[1], normalize_subject(hm.group(1))))
+    subject_marks.sort(key=lambda m: (m[0], m[1]))
+    fallback_subject = normalize_subject(default_subject) or infer_subject(default_section)
+
+    def _subject_for(p_idx: int, y: float) -> Optional[str]:
+        current = None
+        for mp, my, ms in subject_marks:
+            if (mp, my) <= (p_idx, y + 1):
+                current = ms
+            else:
+                break
+        return current or fallback_subject
 
     # Deduplicate in case a header appeared twice on the same line
     unique_starts = []
@@ -465,6 +502,7 @@ async def analyze_pdf(
 
         # Determine section: Admin-configured default_section is authoritative
         section = default_section or "Section A"
+        q_subject = _subject_for(p_start, y_start)
 
         # Topic metadata: Extracted independently, does NOT override question section
         topic = None
@@ -656,6 +694,7 @@ async def analyze_pdf(
             question_number=q_num,
             question_type=q_type,
             section=section,
+            subject=q_subject,
             topic=topic,
             text=statement,
             question_image=primary_image,

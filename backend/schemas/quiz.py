@@ -25,6 +25,9 @@ class OptionOut(BaseModel):
 class QuestionCreate(BaseModel):
     order_index: int = 0
     section: str = "General"
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str = ""
     question_image: Optional[str] = None
     content_type: ContentType = ContentType.text
@@ -44,6 +47,9 @@ class QuestionOut(BaseModel):
     id: str
     order_index: int
     section: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str
     question_image: Optional[str] = None
     content_type: ContentType
@@ -130,7 +136,7 @@ class QuizOut(BaseModel):
     title: str
     description: Optional[str] = None
     instructions: Optional[str] = None
-    solution_pdf: Optional[str] = None
+    has_solution_pdf: bool = False   # the PDF itself is only served by GET /quizzes/{id}/solution-pdf
     solution_pdf_name: Optional[str] = None
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
@@ -175,6 +181,7 @@ class QuestionStudentOut(BaseModel):
     id: str
     order_index: int
     section: str
+    subject: Optional[str] = None
     text: str
     question_image: Optional[str] = None
     content_type: ContentType
@@ -196,7 +203,7 @@ class QuizStudentOut(BaseModel):
     title: str
     description: Optional[str] = None
     instructions: Optional[str] = None
-    solution_pdf: Optional[str] = None
+    has_solution_pdf: bool = False   # the PDF itself is only served by GET /quizzes/{id}/solution-pdf
     solution_pdf_name: Optional[str] = None
     availability_start: Optional[datetime] = None
     availability_end: Optional[datetime] = None
@@ -266,6 +273,44 @@ class QuizListOut(BaseModel):
         return self
 
 
+class QuizSectionSummary(BaseModel):
+    name: str
+    subject: Optional[str] = None
+    count: int = 0
+
+
+class QuizSummaryOut(BaseModel):
+    """Lightweight quiz card for lists — no questions, images or PDFs."""
+    id: str
+    title: str
+    description: Optional[str] = None
+    instructions: Optional[str] = None
+    status: QuizStatus
+    time_per_q_sec: int
+    total_duration_minutes: Optional[float] = None
+    time_per_question_min: Optional[float] = None
+    total_marks: float
+    is_public: bool = False
+    tags: Optional[List[str]] = None
+    subject: Optional[str] = None
+    difficulty: Optional[str] = None
+    availability_start: Optional[datetime] = None
+    availability_end: Optional[datetime] = None
+    creator_id: str
+    created_at: datetime
+    updated_at: datetime
+    question_count: int = 0
+    untagged_count: int = 0
+    missing_key_count: int = 0
+    sections: List[QuizSectionSummary] = []
+    subjects: List[str] = []
+    positive_marks: Optional[float] = None
+    negative_marks: Optional[float] = None
+    has_solution_pdf: bool = False
+    solution_pdf_name: Optional[str] = None
+    in_progress: bool = False   # this student has an unfinished attempt (resume, even on a new device)
+
+
 # ── Bulk Import Schemas ────────────────────────────────────────────────────────
 
 class BulkImportOptionItem(BaseModel):
@@ -279,7 +324,10 @@ class BulkImportQuestionItem(BaseModel):
     question_number: int
     question_type: str = "single_correct" # "single_correct" | "multi_correct" | "numerical" | "assertion_reason" | "match_column"
     section: str = "General"
+    subject: Optional[str] = None
     topic: Optional[str] = None
+    chapter: Optional[str] = None
+    chapter_source: Optional[str] = None
     text: str = ""
     question_image: Optional[str] = None # base64 data URL of diagram or statement
     diagram: Optional[str] = None
@@ -310,3 +358,45 @@ class BulkImportAnalyzeResponse(BaseModel):
 class BulkImportConfirmRequest(BaseModel):
     questions: List[QuestionCreate]
 
+
+
+# ── Chapter tagging schemas ───────────────────────────────────────────────────
+
+class ChapterSuggestItem(BaseModel):
+    key: str                      # caller-defined id (question id or import index)
+    text: str = ""
+    subject: Optional[str] = None
+
+
+class ChapterSuggestRequest(BaseModel):
+    items: List[ChapterSuggestItem] = Field(default_factory=list, max_length=60)
+    use_ai: bool = True
+
+
+class ChapterSuggestion(BaseModel):
+    key: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+    source: Optional[str] = None
+    confidence: float = 0.0
+
+
+class QuestionChapterUpdate(BaseModel):
+    question_id: str
+    subject: Optional[str] = None
+    chapter: Optional[str] = None
+
+
+class QuestionChapterBulkUpdate(BaseModel):
+    updates: List[QuestionChapterUpdate]
+
+
+
+class AnswerKeyUpdate(BaseModel):
+    question_id: str
+    correct_answer: Optional[int] = None     # single correct / assertion-reason / match the column
+    raw_answer: Optional[str] = None         # numerical value, or letters for multi-correct ("A, C")
+
+
+class AnswerKeyBulkUpdate(BaseModel):
+    updates: List[AnswerKeyUpdate]
