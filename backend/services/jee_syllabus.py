@@ -100,6 +100,46 @@ SYLLABUS: dict[str, list[tuple[str, list[str]]]] = {
     ],
 }
 
+# Extra phrases seen in JEE papers (multi-word phrases score double)
+_EXTRA_KEYWORDS: dict[str, dict[str, list[str]]] = {
+    "Physics": {
+        "Ray Optics": ["ray of light", "equilateral prism", "angle of deviation", "minimum deviation", "biconvex", "concave", "convex", "compound microscope"],
+        "Mechanical Properties of Solids": ["modulus of rigidity", "rigidity", "breaking stress", "elongation", "steel wire"],
+        "Gravitation": ["earth's surface", "below the earth", "above the earth", "radius of the earth", "change in g"],
+        "Semiconductors and Electronic Devices": ["logic circuit", "input combination", "and gate", "or gate", "not gate"],
+        "Alternating Current": ["a.c. source", "ac source", "angular frequency"],
+        "Electromagnetic Induction": ["inductance", "inductor"],
+        "Current Electricity": ["terminals", "battery", "potential difference across"],
+        "Experimental Skills": ["zero error", "vernier scale", "main scale"],
+        "Kinematics": ["dropped from", "above the ground", "thrown up", "thrown vertically", "free fall", "freely falling"],
+    },
+    "Chemistry": {
+        "Ionic Equilibrium": ["sparingly soluble", "solubility", "ph of", "acidic medium"],
+        "Chemical Bonding and Molecular Structure": ["hybridized", "hybridised", "sp³d", "sp3d", "sp³", "lone pair"],
+        "Amines and Nitrogen Compounds": ["isocyanide", "cyanide", "aromatic amine", "nh₂"],
+        "Alcohols, Phenols and Ethers": ["pcc", "nitrophenol", "o-nitrophenol", "p-nitrophenol", "dehydration"],
+        "Principles of Practical Chemistry": ["primary standard", "titrimetric", "phenolphthalein"],
+        "Coordination Compounds": ["metal carbonyl", "carbonyls", "eg orbital", "t2g"],
+        "Chemical Equilibrium": ["pressure equilibrium constant"],
+    },
+    "Mathematics": {
+        "Matrices and Determinants": ["system of linear equations", "infinitely many solutions", "consistent", "adj("],
+        "Straight Lines": ["orthocentre", "orthocenter", "centroid", "equilateral triangle", "vertex p"],
+        "Three Dimensional Geometry": ["distance of the point", "point of intersection of the lines", "lines r", "from the line"],
+        "Definite Integration": ["value of the integral", "∫0", "∫π"],
+        "Sequences and Series": ["∑", "sum of the first", "terms of an a.p."],
+    },
+}
+for _subj, _chs in _EXTRA_KEYWORDS.items():
+    for _i, (_ch, _kws) in enumerate(SYLLABUS[_subj]):
+        if _chs.get(_ch):
+            SYLLABUS[_subj][_i] = (_ch, _kws + [k for k in _chs[_ch] if k not in _kws])
+
+# Words that appear in many chapters count half, so one generic hit can't outvote the topic
+_GENERIC = {"mole", "set", "function", "relation", "power", "wave", "charge", "complex", "ways", "selected", "mean",
+            "velocity", "displacement", "radius", "roots", "focus", "plane", "resonance", "elastic", "emf",
+            "balancing", "periodic", "indicator", "ph", "orbital", "increasing", "decreasing", "tangent", "normal"}
+
 _ALL_CHAPTERS: dict[str, str] = {
     ch.lower(): subj for subj, items in SYLLABUS.items() for ch, _ in items
 }
@@ -166,19 +206,20 @@ def keyword_suggest(text: str, subject: Optional[str] = None) -> Optional[tuple[
     if len(blob.strip()) < 3:
         return None
     subjects = [subject] if subject in SYLLABUS else SUBJECTS
-    best: tuple[int, str, str] | None = None
+    best: tuple[float, str, str] | None = None
     second = 0
     for subj in subjects:
         for chapter, kws in SYLLABUS[subj]:
-            score = 0
+            score = 0.0
             for kw in kws:
                 kw_l = kw.lower()
+                w = 0.5 if kw_l in _GENERIC else 1.0
                 # whole-word-ish match for short keywords to avoid 'sin' in 'using'
                 if len(kw_l) <= 4:
                     if re.search(rf"(?<![a-z]){re.escape(kw_l)}(?![a-z])", blob):
-                        score += 1
+                        score += w
                 elif kw_l in blob:
-                    score += 2 if " " in kw_l else 1
+                    score += (2 if " " in kw_l else 1) * w
             if score and (best is None or score > best[0]):
                 second = best[0] if best else 0
                 best = (score, subj, chapter)

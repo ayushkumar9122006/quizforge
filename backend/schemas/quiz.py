@@ -329,6 +329,8 @@ class BulkImportQuestionItem(BaseModel):
     chapter: Optional[str] = None
     chapter_source: Optional[str] = None
     text: str = ""
+    tag_text: Optional[str] = None # plain reading-order text, for chapter tagging when the statement is an image
+    statement_is_image: bool = False # statement (maths / tables) is shown as a crop of the PDF
     question_image: Optional[str] = None # base64 data URL of diagram or statement
     diagram: Optional[str] = None
     match_data: Optional[str] = None # JSON string storing structured columns: { column_1, column_2 }
@@ -353,6 +355,7 @@ class BulkImportAnalyzeResponse(BaseModel):
     ready_count: int
     needs_review_count: int
     questions: List[BulkImportQuestionItem]
+    detected_sections: List[str] = []   # e.g. "Physics – Section B (Numerical)", read from the paper's banners
 
 
 class BulkImportConfirmRequest(BaseModel):

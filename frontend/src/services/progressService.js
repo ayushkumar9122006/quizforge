@@ -59,6 +59,7 @@ export async function autoTagQuiz(quizId, overwriteSuggestions = false) {
 }
 
 export function questionTextForTagging(q) {
+  if (q.tag_text) return String(q.tag_text).trim()
   const opts = (q.options || []).map(o => (typeof o === 'string' ? o : (o?.text || ''))).filter(Boolean)
   return [q.text || '', ...opts].join('\n').trim()
 }

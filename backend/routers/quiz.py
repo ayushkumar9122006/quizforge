@@ -566,8 +566,8 @@ async def update_answer_keys(
         n_opts = len(q.options or [])
         if t == "numerical":
             raw = (u.raw_answer or "").strip()
-            if raw and not _re.fullmatch(r"[-+]?\d+(\.\d{1,2})?", raw):
-                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: numerical answer must be a number with up to 2 decimals")
+            if raw and not _re.fullmatch(r"[-+]?\d+(\.\d{1,2})?(\s*(or|\|)\s*[-+]?\d+(\.\d{1,2})?)*", raw, _re.IGNORECASE):
+                raise HTTPException(status_code=400, detail=f"Q{q.order_index + 1}: numerical answer must be a number with up to 2 decimals (several accepted values: \"41.56 or 42\")")
             q.raw_answer = raw or None
         elif t == "multi_correct":
             letters = sorted(set(_re.findall(r"[A-Fa-f]", u.raw_answer or "")), key=str.upper)

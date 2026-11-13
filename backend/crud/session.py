@@ -21,6 +21,19 @@ def _pos_neg(q) -> tuple[float, float]:
     return pos, neg
 
 
+def numerical_keys(raw) -> list:
+    """Accepted values of a numerical key: "12.5" → [12.5]; "41.56 or 42" → [41.56, 42.0]."""
+    out = []
+    for part in re.split(r"\s*(?:\||\bor\b|;)\s*", str(raw or ""), flags=re.IGNORECASE):
+        m = re.search(r"[-+]?\d+(?:\.\d+)?", part)
+        if m:
+            try:
+                out.append(float(m.group(0)))
+            except ValueError:
+                pass
+    return out
+
+
 def has_answer_key(q) -> bool:
     """Whether a question has a usable answer key for its type."""
     t = getattr(q, "question_type", "single_correct") or "single_correct"
@@ -59,15 +72,8 @@ def evaluate_answer(q, sel_opt, resp_text) -> dict:
                 student_val = None
         if student_val is None:
             return {"kind": "wrong", "is_correct": False, "marks": -neg}
-        correct_val = None
-        if q.raw_answer:
-            m = re.search(r"[-+]?\d+(?:\.\d+)?", str(q.raw_answer))
-            if m:
-                try:
-                    correct_val = float(m.group(0))
-                except ValueError:
-                    pass
-        if correct_val is not None and abs(student_val - correct_val) <= 0.01 + 1e-7:
+        accepted = numerical_keys(q.raw_answer)
+        if any(abs(student_val - v) <= 0.01 + 1e-7 for v in accepted):
             return {"kind": "correct", "is_correct": True, "marks": pos}
         return {"kind": "wrong", "is_correct": False, "marks": -neg}
 

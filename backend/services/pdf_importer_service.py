@@ -248,6 +248,29 @@ def extract_options_and_answer(raw_body: str) -> Tuple[str, List[Dict[str, Any]]
     return _clean_text(statement), options, correct_idx, correct_raw, explanation
 
 
+def _layout_answer(answer_raw: Optional[str], options: List[Dict[str, Any]]) -> Tuple[Optional[int], Optional[str]]:
+    """Printed key → (option index, raw_answer). Numerical keys keep every accepted value."""
+    if not answer_raw:
+        return None, None
+    raw = answer_raw.strip()
+    if not options:
+        nums = re.findall(r"[-+]?\d+(?:\.\d+)?", raw)
+        if not nums:
+            return None, raw
+        approx = re.search(r"[≈~]\s*([-+]?\d+(?:\.\d+)?)", raw)
+        values = [nums[0]] + ([approx.group(1)] if approx and approx.group(1) != nums[0] else [])
+        return None, " or ".join(values)
+    letters = [l.upper() for l in re.findall(r"\b([A-Fa-f1-6])\b", raw)]
+    letters = [chr(ord("A") + int(l) - 1) if l.isdigit() else l for l in letters]
+    letters = list(dict.fromkeys(letters))
+    if len(letters) == 1:
+        idx = ord(letters[0]) - ord("A")
+        return (idx if 0 <= idx < len(options) else None), letters[0]
+    if len(letters) > 1:
+        return None, ", ".join(sorted(letters))
+    return None, raw
+
+
 def detect_question_type(text: str, options: List[Dict], raw_answer: Optional[str]) -> str:
     """
     Classifies question type strictly following question markers and user requirements.
@@ -345,6 +368,14 @@ async def analyze_pdf(
 
     # Sort starts in natural order
     question_starts.sort(key=lambda s: (s[0], s[1]))
+
+    # ── 1a. Layout-aware parse (typeset maths papers, section banners) ─────────
+    try:
+        from services.pdf_layout_parser import parse_layout
+        layout = parse_layout(doc)
+    except Exception:
+        layout = {"questions": {}, "sections": []}
+    layout_qs = layout.get("questions", {})
 
     # ── 1b. Subject headings (e.g. "PART A – PHYSICS", "CHEMISTRY") ────────────
     # Full-syllabus papers are split by subject; remember where each starts so
@@ -504,6 +535,26 @@ async def analyze_pdf(
         section = default_section or "Section A"
         q_subject = _subject_for(p_start, y_start)
 
+        lq = layout_qs.get(q_num)
+        use_layout = bool(lq) and not re.search(r"Column\s*[-–]?\s*I\b|MATCH THE COLUMN", lq.get("raw_text", ""), re.IGNORECASE)
+        tag_text = None
+        statement_is_image = False
+        if use_layout:
+            statement = lq["text"]
+            tag_text = lq["tag_text"]
+            statement_is_image = lq["statement_is_image"]
+            options_dict_list = [
+                {"order_index": i, "label": o["label"], "text": o["text"], "image": o["image"]}
+                for i, o in enumerate(lq["options"])
+            ]
+            correct_idx, raw_ans = _layout_answer(lq["answer_raw"], options_dict_list)
+            # subject banners ("PHYSICS — SECTION B: NUMERICAL…") name the section;
+            # papers without subject banners keep the admin's section
+            if lq.get("subject") and lq.get("section"):
+                section = lq["section"]
+            q_subject = lq.get("subject") or q_subject
+            full_raw_body = lq["raw_text"] + ("\n[Numerical Value Type]" if lq.get("section_kind") == "Numerical" and not options_dict_list else "")
+
         # Topic metadata: Extracted independently, does NOT override question section
         topic = None
         if "Kinetics" in filename or "Kinetics" in statement:
@@ -532,13 +583,13 @@ async def analyze_pdf(
                 correct_options_list = [chr(ord('A') + correct_idx)]
         elif q_type == "numerical":
             correct_options_list = []
-            if raw_ans:
+            if raw_ans and not use_layout:
                 num_m = re.search(r"[-+]?\d+(?:\.\d+)?", raw_ans)
                 if num_m:
                     raw_ans = num_m.group(0)
 
         # Primary question image & diagram
-        images = q_extracted_images.get(q_num, [])
+        images = [] if use_layout else q_extracted_images.get(q_num, [])
         primary_image = None
         diagram_image = None
         match_data_json = None
@@ -616,6 +667,9 @@ async def analyze_pdf(
 
             # Populate structured match_data if available (as structured backup)
             match_data_json = parse_match_column_data(full_raw_body)
+        elif use_layout:
+            primary_image = lq["statement_image"]
+            diagram_image = lq["diagram"]
         else:
             # Standard diagram handling for non-visual-match questions
             if images:
@@ -644,6 +698,13 @@ async def analyze_pdf(
         needs_review = False
         review_notes = []
         confidence = 1.0
+
+        if use_layout and q_type in ("single_correct", "assertion_reason", "multi_correct") and any(
+            not (o.text or "").strip() and not o.image for o in options_models
+        ):
+            needs_review = True
+            review_notes.append("An option came out empty")
+            confidence -= 0.3
 
         if not statement and not primary_image and not diagram_image:
             needs_review = True
@@ -697,6 +758,8 @@ async def analyze_pdf(
             subject=q_subject,
             topic=topic,
             text=statement,
+            tag_text=tag_text,
+            statement_is_image=statement_is_image,
             question_image=primary_image,
             diagram=diagram_image,
             match_data=match_data_json,
@@ -723,5 +786,6 @@ async def analyze_pdf(
         total_questions=len(questions_out),
         ready_count=ready_count,
         needs_review_count=needs_review_count,
-        questions=questions_out
+        questions=questions_out,
+        detected_sections=layout.get("sections", []) if any(q.section in layout.get("sections", []) for q in questions_out) else [],
     )
