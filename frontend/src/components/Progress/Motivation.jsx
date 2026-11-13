@@ -1,8 +1,10 @@
 /**
  * Streaks & daily goal, badges, most-improved leaderboard.
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { getStreak, setDailyGoal, getBadges, getMostImproved, getStudentMotivation } from '../../services/progressService.js'
+import { useAuth } from '../../context/AuthContext.jsx'
 import { Panel, Sparkline, fmtDate } from './ui.jsx'
 
 // ── shared hook ───────────────────────────────────────────────────────────────
@@ -15,8 +17,133 @@ export function useStreak(enabled = true) {
   return [streak, refresh, setStreak]
 }
 
+// ── "goal done" celebration (plays once per student per day) ─────────────────
+const celebratedThisSession = new Set()
+const CONFETTI_COLORS = ['#f97316', '#fb923c', '#facc15', '#6366f1', '#10b981', '#ec4899', '#38bdf8']
+
+function alreadyCelebrated(key) {
+  if (celebratedThisSession.has(key)) return true
+  try { return localStorage.getItem('qf_streak_celebrated') === key } catch { return false }
+}
+function markCelebrated(key) {
+  celebratedThisSession.add(key)
+  try { localStorage.setItem('qf_streak_celebrated', key) } catch { /* private mode: the session set still stops repeats */ }
+}
+
+export function StreakCelebration({ streak }) {
+  const { user } = useAuth() || {}
+  const [open, setOpen] = useState(false)
+  const [closing, setClosing] = useState(false)
+  const [snap, setSnap] = useState(null)
+  const timer = useRef(null)
+
+  useEffect(() => {
+    if (!streak?.today?.met || user?.role === 'admin') return
+    const key = `${user?.id || 'me'}:${streak.today.date}`
+    if (alreadyCelebrated(key)) return
+    markCelebrated(key)
+    setSnap(streak)
+    setOpen(true)
+  }, [streak, user])
+
+  useEffect(() => {
+    if (!open) return
+    const onKey = e => { if (e.key === 'Escape' || e.key === 'Enter') close() }
+    window.addEventListener('keydown', onKey)
+    timer.current = setTimeout(close, 6500)
+    return () => { window.removeEventListener('keydown', onKey); clearTimeout(timer.current) }
+  }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const close = () => {
+    setClosing(true)
+    setTimeout(() => { setOpen(false); setClosing(false) }, 240)
+  }
+
+  if (!open || !snap) return null
+  const n = Math.max(1, snap.current)
+  const isBest = n >= (snap.longest || 0) && n > 1
+  const week = snap.history.slice(-7)
+  const viaTest = snap.today.tests > 0 && snap.today.revised < snap.daily_goal
+  const R = 70, LEN = 2 * Math.PI * R
+  const confetti = Array.from({ length: 46 }, (_, i) => {
+    const a = (i / 46) * Math.PI * 2 + (i % 3) * 0.2
+    const dist = 120 + ((i * 37) % 90)
+    return {
+      '--x': `${Math.cos(a) * dist}px`, '--y': `${Math.sin(a) * dist * 0.8 + 90}px`,
+      '--r': `${(i % 2 ? 1 : -1) * (240 + (i * 53) % 360)}deg`, '--d': `${1.1 + (i % 6) * 0.03}s`,
+      background: CONFETTI_COLORS[i % CONFETTI_COLORS.length],
+      width: i % 4 === 0 ? 6 : 8, height: i % 3 === 0 ? 8 : 13, borderRadius: i % 5 === 0 ? '50%' : 2,
+    }
+  })
+
+  return createPortal(
+    <div className={`qf-celebrate-backdrop${closing ? ' closing' : ''}`} onClick={close} role="dialog" aria-modal="true" aria-label={`Daily goal done. ${n}-day streak.`}>
+      <div className="qf-celebrate-card" onClick={e => e.stopPropagation()}>
+        <div className="qf-ring-wrap">
+          <div className="qf-ring-glow" />
+          <svg viewBox="0 0 168 168" width="168" height="168" aria-hidden>
+            <defs>
+              <linearGradient id="qfRing" x1="0" y1="0" x2="1" y2="1">
+                <stop offset="0%" stopColor="#facc15" /><stop offset="55%" stopColor="#f97316" /><stop offset="100%" stopColor="#ea580c" />
+              </linearGradient>
+            </defs>
+            <circle cx="84" cy="84" r={R} fill="none" stroke="#ffedd5" strokeWidth="10" />
+            <circle className="qf-ring-fill" cx="84" cy="84" r={R} fill="none" stroke="url(#qfRing)" strokeWidth="10" strokeLinecap="round"
+              strokeDasharray={LEN} style={{ '--len': LEN }} />
+          </svg>
+          <div className="qf-flame" aria-hidden>🔥</div>
+          <div className="qf-confetti" aria-hidden>{confetti.map((st, i) => <i key={i} style={st} />)}</div>
+        </div>
+
+        <div className="qf-count" aria-hidden>
+          <div className="qf-count-roll"><span>{n - 1}</span><span>{n}</span></div>
+        </div>
+        <div className="qf-pop" style={{ animationDelay: '1.35s' }}>
+          <div style={{ fontSize: 20, fontWeight: 900, color: '#7c2d12' }}>{n}-day streak!</div>
+          {isBest && <div style={{ display: 'inline-block', marginTop: 6, fontSize: 11.5, fontWeight: 900, color: '#fff', background: 'linear-gradient(135deg,#f97316,#ea580c)', borderRadius: 999, padding: '3px 10px' }}>🏆 New best streak</div>}
+          <p style={{ fontSize: 13.5, color: '#78716c', margin: '8px 0 0', lineHeight: 1.45 }}>
+            {viaTest ? 'You took a test today, so your streak is safe.' : `Daily goal done: ${snap.today.revised} question${snap.today.revised !== 1 ? 's' : ''} revised.`}
+            {' '}See you tomorrow!
+          </p>
+        </div>
+
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 8, margin: '18px 0 20px' }}>
+          {week.map((d, i) => {
+            const isToday = i === week.length - 1
+            return (
+              <div key={d.date} className="qf-day-dot" style={{ animationDelay: isToday ? '1.7s' : `${1.4 + i * 0.04}s`, textAlign: 'center' }}>
+                <div style={{
+                  width: 30, height: 30, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14,
+                  background: d.met || isToday ? 'linear-gradient(135deg,#fb923c,#f97316)' : '#f1f5f9',
+                  color: d.met || isToday ? '#fff' : '#cbd5e1', fontWeight: 900,
+                  boxShadow: isToday ? '0 0 0 3px #fed7aa, 0 6px 16px rgba(249,115,22,.45)' : 'none',
+                }}>{d.met || isToday ? '✓' : '·'}</div>
+                <div style={{ fontSize: 10.5, color: isToday ? '#c2410c' : '#a8a29e', marginTop: 4, fontWeight: isToday ? 900 : 600 }}>{d.weekday[0]}</div>
+              </div>
+            )
+          })}
+        </div>
+
+        <button className="btn-pri qf-pop" style={{ animationDelay: '1.6s', width: '100%', background: 'linear-gradient(135deg,#f97316,#ea580c)', boxShadow: '0 10px 24px rgba(234,88,12,.35)' }} onClick={close} autoFocus>
+          Keep going
+        </button>
+      </div>
+    </div>,
+    document.body,
+  )
+}
+
 // ── chip (home, notebook, practice) ───────────────────────────────────────────
-export function StreakChip({ streak, onClick, compact = false }) {
+export function StreakChip({ streak, onClick, compact = false, celebrate = true }) {
+  const prev = useRef(null)
+  const [bump, setBump] = useState(0)
+  const [plus, setPlus] = useState(0)
+  useEffect(() => {
+    const r = streak?.today?.revised
+    if (r == null) return
+    if (prev.current != null && r > prev.current) { setBump(b => b + 1); setPlus(r - prev.current) }
+    prev.current = r
+  }, [streak])
   if (!streak) return null
   const { current, today, daily_goal: goal, at_risk: atRisk } = streak
   const done = Math.min(today.revised, goal)
@@ -25,25 +152,31 @@ export function StreakChip({ streak, onClick, compact = false }) {
   const border = today.met ? '#fdba74' : atRisk ? '#fecaca' : '#e2e8f0'
   const Tag = onClick ? 'button' : 'div'
   return (
-    <Tag
-      onClick={onClick}
-      title={streak.message}
-      aria-label={`${current}-day streak. Today ${today.revised} of ${goal} questions revised.`}
-      style={{ display: 'inline-flex', alignItems: 'center', gap: 10, padding: compact ? '6px 11px' : '8px 14px', borderRadius: 999, background: bg, border: `1px solid ${border}`, cursor: onClick ? 'pointer' : 'default', font: 'inherit' }}
-    >
-      <span aria-hidden style={{ fontSize: compact ? 16 : 19, filter: current ? 'none' : 'grayscale(1)', opacity: current ? 1 : 0.55 }}>🔥</span>
-      <span style={{ fontWeight: 900, fontSize: compact ? 13 : 14, color: current ? '#9a3412' : '#475569', fontVariantNumeric: 'tabular-nums' }}>
-        {current ? `${current}-day streak` : 'No streak yet'}
-      </span>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ width: compact ? 44 : 60, height: 6, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden' }}>
-          <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: today.met ? '#f97316' : '#6366f1' }} />
+    <>
+      <Tag
+        key={bump}
+        className={bump ? 'qf-chip-bump' : undefined}
+        onClick={onClick}
+        title={streak.message}
+        aria-label={`${current}-day streak. Today ${today.revised} of ${goal} questions revised.`}
+        style={{ position: 'relative', display: 'inline-flex', alignItems: 'center', gap: 10, padding: compact ? '6px 11px' : '8px 14px', borderRadius: 999, background: bg, border: `1px solid ${border}`, cursor: onClick ? 'pointer' : 'default', font: 'inherit' }}
+      >
+        <span aria-hidden style={{ fontSize: compact ? 16 : 19, filter: current ? 'none' : 'grayscale(1)', opacity: current ? 1 : 0.55 }}>🔥</span>
+        <span style={{ fontWeight: 900, fontSize: compact ? 13 : 14, color: current ? '#9a3412' : '#475569', fontVariantNumeric: 'tabular-nums' }}>
+          {current ? `${current}-day streak` : 'No streak yet'}
         </span>
-        <span style={{ fontSize: 12, fontWeight: 800, color: today.met ? '#c2410c' : '#475569', fontVariantNumeric: 'tabular-nums' }}>
-          {today.met ? '✓ today' : `${today.revised}/${goal}`}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ width: compact ? 44 : 60, height: 6, background: '#e2e8f0', borderRadius: 4, overflow: 'hidden' }}>
+            <span style={{ display: 'block', width: `${pct}%`, height: '100%', background: today.met ? '#f97316' : '#6366f1', transition: 'width .5s cubic-bezier(.3,1.4,.5,1)' }} />
+          </span>
+          <span style={{ fontSize: 12, fontWeight: 800, color: today.met ? '#c2410c' : '#475569', fontVariantNumeric: 'tabular-nums' }}>
+            {today.met ? '✓ today' : `${today.revised}/${goal}`}
+          </span>
         </span>
-      </span>
-    </Tag>
+        {bump > 0 && plus > 0 && !today.met && <span className="qf-plus-one" aria-hidden>+{plus}</span>}
+      </Tag>
+      {celebrate && <StreakCelebration streak={streak} />}
+    </>
   )
 }
 
@@ -61,6 +194,8 @@ export function StreakPanel({ streak, editable, onChange }) {
   }
 
   return (
+    <>
+    {editable && <StreakCelebration streak={streak} />}
     <Panel title="Streak & daily goal" icon="🔥" style={{ marginBottom: 0 }}
       right={editable ? (
         <label style={{ fontSize: 12, color: '#64748b', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -102,6 +237,7 @@ export function StreakPanel({ streak, editable, onChange }) {
       </div>
       <p style={{ fontSize: 11.5, color: '#94a3b8', margin: '10px 0 0' }}>{streak.rule}</p>
     </Panel>
+    </>
   )
 }
 

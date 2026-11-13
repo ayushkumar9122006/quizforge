@@ -4,6 +4,7 @@
 
 ### Added
 - **Daily goal + streak**: a day counts when you revise your goal (default 10 questions from the notebook or weak-chapter practice) or submit a test. Streak chip on Home, the notebook and practice; streak panel with the last 14 days and a goal picker on My Progress.
+- **Goal-done celebration**: when today's goal is hit (or a test is taken), the ring fills, the flame lights up, the streak number rolls up, confetti bursts and the week's days tick in. Plays once per student per day; respects reduced-motion. The streak chip pops with a +1 on every answer.
 - **Badges** (16): first test, 5/10/25 tests, mastered 10/50/100 mistakes, 3/7/30-day streak, 5 practice sets, beat your target, new personal best, rank climber (+20 percentile), top 10 %, no silly mistakes. Locked badges show progress; new ones are flagged.
 - **Most improved leaderboard**: ranked by improvement (last 2 tests vs the 2 before), not the top score. On My Progress (top 10 + you) and as an admin tab in Students & Progress.
 - **Answer-key editor** on the admin Chapters screen (now "Chapters & answer keys"), with a "Missing key" filter; saving re-scores every submitted attempt. Admin quiz cards show "🔑 N missing answer keys".
