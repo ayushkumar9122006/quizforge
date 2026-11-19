@@ -127,10 +127,8 @@ async def run_tests():
         db.add_all([opt1_a, opt1_b, opt1_c, opt1_d, opt2_a, opt2_b, opt2_c, opt2_d])
 
         # ── 3. Create Session Room ────────────────────────────────────────────
-        room_code = f"P5{unique_suffix[:4].upper()}"
         session = QuizSession(
             quiz_id=quiz.id,
-            room_code=room_code,
             status=SessionStatus.active,
             started_at=datetime.utcnow()
         )

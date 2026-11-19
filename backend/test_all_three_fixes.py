@@ -209,7 +209,6 @@ async def run_tests():
         # -------------------------------------------------------------
         session = QuizSession(
             quiz_id=loaded_quiz.id,
-            room_code="TEST99",
             status="active"
         )
         db.add(session)

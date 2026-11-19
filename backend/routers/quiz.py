@@ -21,7 +21,6 @@ from models.all_models import User, UserRole, QuizStatus, SessionStatus, Attempt
 from typing import List
 from datetime import datetime, timezone, timedelta
 import zoneinfo
-import secrets
 import base64
 
 IST = zoneinfo.ZoneInfo("Asia/Kolkata")
@@ -185,10 +184,8 @@ async def start_quiz_attempt(
     )
     session = session_res.scalar_one_or_none()
     if not session:
-        room_code = secrets.token_hex(3).upper()
         session = QuizSession(
             quiz_id=quiz_id,
-            room_code=room_code,
             status=SessionStatus.active,
             started_at=datetime.utcnow(),
             max_students=1000,

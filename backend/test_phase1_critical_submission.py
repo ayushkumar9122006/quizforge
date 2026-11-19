@@ -78,7 +78,6 @@ async def run_phase1_tests():
 
         session = QuizSession(
             quiz_id=quiz.id,
-            room_code="123456",
             status="active",
             started_at=datetime.utcnow()
         )
@@ -130,7 +129,7 @@ async def run_phase1_tests():
 
         # ── Test 3: Concurrent submissions serialization ──
         print("\n[TEST 3] Concurrent submissions serialization...")
-        session2 = QuizSession(quiz_id=quiz.id, room_code="654321", status="active", started_at=datetime.utcnow())
+        session2 = QuizSession(quiz_id=quiz.id, status="active", started_at=datetime.utcnow())
         db.add(session2)
         await db.commit()
         await db.refresh(session2)

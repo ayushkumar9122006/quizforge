@@ -230,19 +230,17 @@ class Option(Base):
     )
 
 
-# ── Quiz Session (Room) ────────────────────────────────────────────────────────
+# ── Quiz Session ─────────────────────────────────────────────────────────────
 
 class QuizSession(Base):
     """
-    A live quiz session — like a Kahoot room.
-    Each session has a unique 6-digit room code.
-    One quiz can have many sessions over time.
+    Internal container for the attempts of one quiz. Created automatically the
+    first time a student starts the test (POST /quizzes/{id}/start-attempt).
     """
     __tablename__ = "quiz_sessions"
 
     id          : Mapped[str]           = mapped_column(String(36), primary_key=True, default=new_uuid)
     quiz_id     : Mapped[str]           = mapped_column(String(36), ForeignKey("quizzes.id", ondelete="CASCADE"), nullable=False, index=True)
-    room_code   : Mapped[str]           = mapped_column(String(6), unique=True, nullable=False, index=True)
     status      : Mapped[SessionStatus] = mapped_column(String(20), default=SessionStatus.waiting.value, nullable=False)
     started_at  : Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
     ended_at    : Mapped[datetime|None] = mapped_column(DateTime, nullable=True)
@@ -324,8 +322,7 @@ class Answer(Base):
 class LeaderboardEntry(Base):
     """
     Denormalized leaderboard snapshot per session.
-    Updated in real-time as students submit.
-    Queried fast for WebSocket broadcasts.
+    Updated as students submit; read for ranks and the results leaderboard.
     """
     __tablename__ = "leaderboard"
 

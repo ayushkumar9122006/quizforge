@@ -83,7 +83,6 @@ async def run_tests():
         # 4. Create Quiz Session
         session = QuizSession(
             quiz_id=quiz.id,
-            room_code="123456",
             status="active"
         )
         db.add(session)

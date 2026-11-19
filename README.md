@@ -2,12 +2,12 @@
 
 # 📝 QuizForge
 
-**AI-powered Quiz Platform with OCR, Real-time Leaderboards & Analytics**
+**JEE test platform: PDF/OCR import, ranks & percentiles, and progress analytics that help students improve test after test**
 
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.111-009688?style=flat&logo=fastapi)](https://fastapi.tiangolo.com)
 [![React](https://img.shields.io/badge/React-18-61DAFB?style=flat&logo=react)](https://react.dev)
 [![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat&logo=postgresql)](https://postgresql.org)
-[![WebSockets](https://img.shields.io/badge/WebSockets-Real--time-brightgreen?style=flat)](https://fastapi.tiangolo.com/advanced/websockets/)
+[![PWA](https://img.shields.io/badge/PWA-installable-5A0FC8?style=flat)](https://web.dev/progressive-web-apps/)
 
 </div>
 
@@ -15,11 +15,11 @@
 
 ## 1. Project Overview
 
-QuizForge is a full-stack, real-time quiz platform:
+QuizForge is a full-stack test platform for JEE coaching:
 
 - **Admins** create quizzes (manual, OCR-scanned from photos, or bulk-imported from PDFs), tag chapters, and publish them with an availability window.
 - **Students** start published tests directly within the window (fullscreen, autosaved), then get rank, percentile, chapter-wise mistakes and a long-term progress dashboard.
-- **AI** (via OpenRouter) generates answer explanations and resolves any question left without a marked correct answer — resolved once, server-side, and reused everywhere so every student and the admin's leaderboard/analytics always agree.
+- **AI** (via OpenRouter, optional) suggests JEE chapters for questions and writes answer explanations, which students can open only after submitting that test. It never guesses answer keys: a question without a key is ungraded until the admin sets one.
 
 **Stack:** FastAPI (async SQLAlchemy 2.0) · PostgreSQL 16 · Alembic migrations · JWT auth · React 18 + Vite · Recharts · installable PWA.
 
@@ -86,7 +86,7 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 ### Frontend (`frontend/.env`)
 | Variable | Description | Default |
 |---|---|---|
-| `VITE_BACKEND_URL` | Backend base URL (used for both REST and derived WebSocket URL) | `http://localhost:8000` |
+| `VITE_BACKEND_URL` | Backend base URL for the REST API | `http://localhost:8000` |
 
 ---
 
@@ -155,43 +155,36 @@ npm run dev
   2. Set a real `OPENROUTER_API_KEY` if AI explanations/answer-resolution should return genuine model output.
   3. Point `DATABASE_URL` at your production Postgres instance and run `alembic upgrade head` against it.
   4. Set `FRONTEND_URL` (backend) and `VITE_BACKEND_URL` (frontend) to your real deployed origins.
-  5. Add a rate limiter in front of `/auth/login` and `/sessions/join` (see Known Limitations) before any public launch.
+  5. Add a rate limiter in front of `/auth/login` (see Known Limitations) before any public launch.
 
 ---
 
-## 8. Bugs Fixed in This Release
+## 8. How a Test Works
 
-All of the following were found via live testing against a real PostgreSQL database (not just static review) and are now fixed and re-verified:
+1. The admin creates a test (manual, OCR from photos, or **bulk import from a PDF**), checks the answer keys and chapter tags, and publishes it with an availability window.
+2. During the window, students start the test straight from their home screen.
+3. The test runs in fullscreen with a server-side timer. Answers autosave every 30 s, so a student can resume on any device. Leaving fullscreen counts as a strike.
+4. On submit, or automatically when time runs out, the server scores the attempt. A submit arriving more than 90 s late scores the last autosaved answers.
+5. The student sees rank, percentile, subject-wise rank, mistakes by chapter and time strategy. Mistakes go into their **mistake notebook** for spaced re-attempts.
+6. Over many tests, **My Progress** (student) and **Students & Progress** (admin) show who is improving and which chapters keep going wrong.
 
-1. **Student quiz-join bypass** — students could reach and submit a quiz without ever entering a room code. Submission now requires a prior verified `/sessions/join` call; enforced server-side.
-2. **Answer key exposed to students pre-submission** — `correct_answer`/`explanation` were visible in the quiz payload before a student ever answered. Students now receive a stripped schema; the answer key is only revealed in the post-submission result.
-3. **Inconsistent scoring** — the frontend and backend each independently asked the AI to resolve ambiguous correct answers, which could disagree. Scoring is now resolved exactly once, server-side, and returned in the submit response.
-4. **Analytics dashboard rendering blank** — a field-name mismatch (`total_attempts` vs. `total_submitted`) meant the default Analytics view never rendered any data.
-5. **Duplicate auto-submit** — the countdown timer could fire two submit calls in the same tick; both client- and server-side idempotency guards now prevent double-scoring.
-6. **Password hashing completely broken on a fresh install** — `passlib==1.7.4` is incompatible with `bcrypt>=4.1`; every register/login call failed with a 500. Fixed by pinning `bcrypt==4.0.1`.
-7. **Every quiz save containing an image failed** — OCR-cropped images (full base64 data URLs) were being saved into `VARCHAR(500)` columns. Widened to `TEXT` (migration `0002`).
-8. **Analytics endpoints returned 500 against real Postgres** — five columns were declared as native Postgres `ENUM` types in the ORM model but as plain `VARCHAR` in the actual migration, causing `operator does not exist` errors the moment a query filtered on them. Model aligned to match the real schema; orphan enum types dropped (migration `0003`).
-9. **Backend failed to start on a fresh checkout with no `uploads/` folder** — the static file mount ran before the directory-creation code. Directory creation now happens before the mount.
-10. Various dead code, duplicate queries, and unused imports removed (see `CHANGELOG.md`).
+Full change history: `CHANGELOG.md`.
 
 ---
 
-## 9. New Features / Improvements
+## 9. Security & Data Rules
 
-- Room-code join modal on the student side (previously missing entirely).
-- Backend-authoritative, single-source-of-truth result payload (`AttemptResultOut`) returned from `POST /sessions/{id}/submit`, including a per-question correctness breakdown.
-- WebSocket auto-reconnect now refreshes an expired access token instead of retrying with a stale one.
-- Idempotent submission handling (a duplicate/retried submit is a safe no-op, not a re-score or a crash).
-- Role-based quiz schemas (`QuizStudentOut` / `QuestionStudentOut`) so students structurally cannot receive the answer key.
+- **Students never receive answer keys before submitting**: they get a stripped schema, and keys, explanations and solution PDFs unlock only after they submit that test.
+- **Scoring is server-side only**, and a duplicate or retried submit is a safe no-op.
+- **Answer keys are never guessed.** Setting or correcting a key re-scores every submitted attempt.
+- Passwords are hashed with bcrypt, and forgot-password requests are throttled (60 s cooldown).
 
 ---
 
 ## 10. Known Limitations
 
-- **No room-code expiry (TTL)** — a room stays joinable until an admin explicitly ends the session.
-- **No quiz-resume** — refreshing mid-quiz loses in-progress answers (all state is in-memory React state).
-- **No rate limiting** — `/auth/login` and `/sessions/join` (a 6-digit numeric code) have no throttling; add one (e.g. `slowapi`) before any public deployment.
-- **AI explanation/answer-resolution quality depends on a real `OPENROUTER_API_KEY`** — without one, the app degrades gracefully to a templated fallback rather than crashing, but won't produce genuine AI-generated explanations.
-- **In-memory WebSocket room state** — `ConnectionManager` holds live participant state in a plain Python dict with no shared backing store, so it will not work correctly across more than one backend worker process/instance without adding a shared pub-sub layer (e.g. Redis).
-- **`LeaderboardEntryOut` omits `student_id`** — the "highlight me" affordance on the live leaderboard cannot currently match the logged-in user.
-- Two browser tabs open as the same student in the same room will have their WebSocket presence tracked as a single slot; closing one tab can incorrectly appear to remove the other.
+- **No rate limiting on `/auth/login`.** Add one (e.g. `slowapi`) before any public deployment.
+- **AI chapter suggestions and explanations need a real `OPENROUTER_API_KEY`.** Without one, chapter tagging falls back to keyword matching and explanations use a template; nothing crashes.
+- **PDF import is tuned for "Q1. … (a)–(d) … Correct Answer: X" papers.** Questions with typeset maths are stored as images cut from the PDF, so their wording can't be edited as text. A diagram printed between two lines of text appears after the text.
+- **Free hosting tiers sleep when idle**, so the first request after a quiet period can take up to ~50 s on Render's free plan.
+- **Images are stored in the database** unless `CLOUDINARY_URL` is set. For large question banks, set it and run `backend/migrate_images_to_cloudinary.py`.

@@ -16,8 +16,8 @@ import secrets
 
 
 async def create_session(db, quiz_id):
-    """Test helper: an active session, as start-attempt creates (room codes were removed)."""
-    s = QuizSession(quiz_id=quiz_id, room_code=secrets.token_hex(3).upper(), status="active")
+    """Test helper: an active session, as start-attempt creates."""
+    s = QuizSession(quiz_id=quiz_id, status="active")
     db.add(s)
     await db.flush()
     return s

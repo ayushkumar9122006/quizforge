@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased] — Room codes fully removed
+
+### Removed
+- `quiz_sessions.room_code` column and its index (migration `0013`); sessions are created automatically when a student starts a test.
+- Remaining room-code / WebSocket references in the README, `docs/API.md`, `docs/ARCHITECTURE.md`, `docs/DEPLOYMENT.md`, schemas, analytics output, error messages and tests.
+
+### Changed
+- README sections 8–10 rewritten for the current app (test flow, security rules, real known limitations).
+
 ## [Unreleased] — PDF import for typeset JEE papers
 
 ### Added

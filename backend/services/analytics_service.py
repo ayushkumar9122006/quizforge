@@ -270,7 +270,6 @@ async def get_quiz_analytics(db: AsyncSession, quiz_id: str, student_id: str | N
             s_scores = [a.score for a in s_atts]
             session_trend.append({
                 "session_id":  s.id,
-                "room_code":   s.room_code,
                 "date":        s.created_at.isoformat() if s.created_at else "",
                 "count":       len(s_atts),
                 "avg_score":   round(sum(s_scores) / len(s_scores), 2),
