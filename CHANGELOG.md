@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased] — Brevo for password-reset OTP emails
+
+### Added
+- **Brevo** transactional email API as the primary OTP sender (`BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME`). It uses HTTPS, so it works on Render's free plan, which blocks SMTP ports.
+- Clear log message when a Brevo **SMTP** key (`xsmtpsib-`) is pasted instead of the API key (`xkeysib-`).
+- `backend/test_brevo_email.py` (mocked Brevo/Resend; includes the forgot-password endpoint).
+
+### Changed
+- Providers are tried in order Brevo → Resend → SMTP; a failure falls through to the next configured one instead of stopping.
+
 ## [Unreleased] — Room codes fully removed
 
 ### Removed

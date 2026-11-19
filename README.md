@@ -79,6 +79,9 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
 | `UPLOAD_DIR` | Directory for static file mounts (auto-created on boot) | `uploads` |
 | `CLOUDINARY_URL` | `cloudinary://<api_key>:<api_secret>@<cloud_name>`. When set, question/option images are stored on Cloudinary instead of the DB | *(unset)* |
+| `BREVO_API_KEY` | Brevo **API** key (`xkeysib-…`, not the SMTP key) for password-reset OTP emails. Sent over HTTPS, so it works on hosts that block SMTP (Render free) | *(unset)* |
+| `BREVO_SENDER_EMAIL` / `BREVO_SENDER_NAME` | Sender verified in Brevo → Senders, and the name students see | *(unset)* / `QuiZee` |
+| `RESEND_API_KEY`, `SMTP_*` | Optional fallbacks, tried after Brevo. With no provider set (outside production), the OTP is printed in the backend terminal | *(unset)* |
 | `STREAK_TIMEZONE` | Time zone that decides when a streak day starts | `Asia/Kolkata` |
 | `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` | Used by `seed.py` | see `.env.example` |
 | `SEED_STUDENT_EMAIL` / `SEED_STUDENT_PASSWORD` | Used by `seed.py` | see `.env.example` |

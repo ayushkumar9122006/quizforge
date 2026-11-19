@@ -1,4 +1,5 @@
 import asyncio
+import re
 import smtplib
 import ssl
 import socket
@@ -19,6 +20,79 @@ def _mask_email(email: str) -> str:
     else:
         masked_local = local[0] + "***" + local[-1]
     return f"{masked_local}@{domain}"
+
+
+def _brevo_sender() -> Tuple[str, str]:
+    """(name, email) Brevo sends from. Must be a sender verified in Brevo → Senders."""
+    email = (settings.brevo_sender_email or "").strip()
+    name = (settings.brevo_sender_name or "QuiZee").strip()
+    if not email:
+        raw = (settings.email_from or "").strip()
+        m = re.match(r"^\s*(.*?)\s*<([^>]+)>\s*$", raw)          # "QuiZee <me@gmail.com>"
+        email = m.group(2).strip() if m else raw
+        if m and m.group(1):
+            name = m.group(1).strip().strip('"')
+        if email.endswith("@resend.dev"):                       # Resend's test sender is not valid for Brevo
+            email = ""
+    return name, email
+
+
+async def _send_brevo_async(to_email: str, to_name: str, subject: str, text_body: str, html_body: str) -> Tuple[bool, str]:
+    """
+    Sends email via Brevo's transactional HTTPS API (POST https://api.brevo.com/v3/smtp/email).
+    Works on hosts that block SMTP ports. Never logs the API key or the OTP.
+    """
+    key = (settings.brevo_api_key or "").strip()
+    if not key:
+        return False, "BREVO_API_KEY is not configured"
+    if key.startswith("xsmtpsib-"):
+        return False, ("BREVO_API_KEY holds a Brevo SMTP key. Use an API key instead "
+                       "(Brevo → SMTP & API → API Keys; it starts with 'xkeysib-').")
+    sender_name, sender_email = _brevo_sender()
+    if not sender_email:
+        return False, "BREVO_SENDER_EMAIL is not set (use an address verified in Brevo → Senders)"
+
+    payload = {
+        "sender": {"name": sender_name, "email": sender_email},
+        "to": [{"email": to_email, **({"name": to_name} if to_name else {})}],
+        "subject": subject,
+        "htmlContent": html_body,
+        "textContent": text_body,
+        "tags": ["password-reset-otp"],
+    }
+    headers = {"api-key": key, "accept": "application/json", "content-type": "application/json"}
+    masked = _mask_email(to_email)
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post("https://api.brevo.com/v3/smtp/email", json=payload, headers=headers)
+        if resp.status_code in (200, 201, 202):
+            try:
+                msg_id = resp.json().get("messageId", "ok")
+            except Exception:
+                msg_id = "ok"
+            print(f"[EMAIL SERVICE] Delivered OTP email to {masked} via Brevo API (id: {msg_id})")
+            return True, ""
+        try:
+            body = resp.json()
+            detail = body.get("message") or body.get("code") or str(body)
+        except Exception:
+            detail = resp.text[:200]
+        hint = ""
+        if resp.status_code == 401:
+            hint = " (check BREVO_API_KEY, and that your server's IP isn't blocked under Brevo → Security → Authorised IPs)"
+        elif resp.status_code == 400 and "sender" in str(detail).lower():
+            hint = " (verify BREVO_SENDER_EMAIL in Brevo → Senders)"
+        err = f"Brevo API error ({resp.status_code}): {detail}{hint}"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except httpx.TimeoutException:
+        err = "Brevo API connection timed out after 15s"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
+    except httpx.HTTPError as exc:
+        err = f"Brevo API network error: {type(exc).__name__}"
+        print(f"[EMAIL SERVICE ERROR] {err} for recipient {masked}")
+        return False, err
 
 
 async def _send_resend_async(to_email: str, subject: str, text_body: str, html_body: str) -> Tuple[bool, str]:
@@ -143,7 +217,8 @@ def _send_smtp_sync(to_email: str, subject: str, text_body: str, html_body: str)
 async def send_otp_email(to_email: str, name: str, otp: str, role: str) -> bool:
     """
     Sends password recovery OTP to the user's email address.
-    If SMTP is not configured, logs to console for local testing.
+    Tries Brevo → Resend → SMTP (each only if configured); the first success wins.
+    With none configured outside production, the code is printed to the console.
     """
     role_label = "Administrator" if role == "admin" else "Student"
     subject = f"Your QuiZee {role_label} Password Reset Code: {otp}"
@@ -202,31 +277,35 @@ If you did not request this, you can safely ignore this email.
 
     masked = _mask_email(to_email)
 
-    # 1. Primary: Resend HTTPS API
+    providers = []
+    if settings.brevo_api_key:
+        providers.append(("Brevo", lambda: _send_brevo_async(to_email, name, subject, text_body, html_body)))
     if settings.resend_api_key:
-        success, err = await _send_resend_async(to_email, subject, text_body, html_body)
-        if success:
-            return True
-        if settings.is_production:
-            print(f"[EMAIL SERVICE ERROR] Production Resend delivery to {masked} failed: {err}")
-            return False
-        print(f"[EMAIL SERVICE] Local Resend delivery failed ({err}), falling back to console mock.")
+        providers.append(("Resend", lambda: _send_resend_async(to_email, subject, text_body, html_body)))
+    if settings.smtp_host:
+        async def _smtp():
+            ok, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
+            if ok:
+                print(f"[EMAIL SERVICE] Delivered OTP email to {masked} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
+            return ok, err
+        providers.append(("SMTP", _smtp))
 
-    # 2. Secondary / Legacy: SMTP (if configured and Resend not configured)
-    elif settings.smtp_host:
-        success, err = await asyncio.to_thread(_send_smtp_sync, to_email, subject, text_body, html_body)
-        if success:
-            print(f"[EMAIL SERVICE] Successfully delivered OTP email to {masked} via SMTP ({settings.smtp_host}:{settings.smtp_port})")
+    errors = []
+    for label, send in providers:
+        ok, err = await send()
+        if ok:
             return True
-        if settings.is_production:
-            print(f"[EMAIL SERVICE ERROR] Production SMTP delivery to {masked} failed: {err}")
-            return False
-        print(f"[EMAIL SERVICE] Local SMTP delivery attempt failed ({err}), falling back to console mock.")
+        errors.append(f"{label}: {err}")
 
-    # 3. Production with neither configured:
     if settings.is_production:
-        print(f"[EMAIL SERVICE ERROR] Production mode is active but neither RESEND_API_KEY nor SMTP_HOST is configured. Delivery aborted for {masked}.")
+        if providers:
+            print(f"[EMAIL SERVICE ERROR] Every email provider failed for {masked}: " + " | ".join(errors))
+        else:
+            print(f"[EMAIL SERVICE ERROR] Production mode but no email provider is configured "
+                  f"(set BREVO_API_KEY + BREVO_SENDER_EMAIL). Delivery aborted for {masked}.")
         return False
+    if errors:
+        print("[EMAIL SERVICE] Local delivery failed (" + " | ".join(errors) + "), falling back to console mock.")
 
     # 4. Non-Production / Local Development Fallback Mock
     print(f"\n{'='*70}")

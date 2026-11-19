@@ -126,3 +126,6 @@ sudo certbot --nginx -d yourdomain.com
 | `OPENROUTER_MODEL` | ❌ | Default: llama-3.1-8b-instruct:free |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | ❌ | Default: 30 |
 | `REFRESH_TOKEN_EXPIRE_DAYS` | ❌ | Default: 7 |
+| `BREVO_API_KEY` | For OTP email | Brevo API key (`xkeysib-…`). Brevo → SMTP & API → API Keys |
+| `BREVO_SENDER_EMAIL` | For OTP email | Sender verified in Brevo → Senders |
+| `BREVO_SENDER_NAME` | No | Sender name (default `QuiZee`) |

@@ -47,7 +47,11 @@ class Settings(BaseSettings):
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
-    # Email configuration (Resend API & SMTP fallback)
+    # Email configuration: Brevo HTTPS API (primary), Resend API, then SMTP.
+    # Render's free plan blocks SMTP ports, so an HTTPS API is the reliable option there.
+    brevo_api_key: str = os.getenv("BREVO_API_KEY", "")
+    brevo_sender_email: str = os.getenv("BREVO_SENDER_EMAIL", "")
+    brevo_sender_name: str = os.getenv("BREVO_SENDER_NAME", "QuiZee")
     resend_api_key: str = os.getenv("RESEND_API_KEY", "")
     email_from: str = os.getenv("EMAIL_FROM", os.getenv("SMTP_FROM_EMAIL", "onboarding@resend.dev"))
     smtp_host: str = os.getenv("SMTP_HOST", "")
