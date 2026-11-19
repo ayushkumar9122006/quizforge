@@ -198,7 +198,6 @@ async def run_all_tests():
         for idx, tc in enumerate(test_cases):
             tc_session = QuizSession(
                 quiz_id=quiz.id,
-                room_code=uuid.uuid4().hex[:6].upper(),
                 status=SessionStatus.active,
                 started_at=datetime.utcnow()
             )
@@ -264,7 +263,6 @@ async def run_all_tests():
         # Test Lazy-finalization when deadline expires while disconnected
         expired_session = QuizSession(
             quiz_id=quiz.id,
-            room_code=uuid.uuid4().hex[:6].upper(),
             status=SessionStatus.active,
             started_at=datetime.utcnow() - timedelta(minutes=80)
         )

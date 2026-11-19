@@ -175,7 +175,7 @@ async def run_numerical_marking_tests():
 
         # ── TEST 3: Result calculation with default negative marks = 1.0 ────
         print("\n[TEST 3] Testing student submission scoring with default negative marks = 1.0...")
-        session = QuizSession(quiz_id=quiz.id, room_code="987654")
+        session = QuizSession(quiz_id=quiz.id)
         db.add(session)
         await db.commit()
         await db.refresh(session)

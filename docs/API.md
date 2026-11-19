@@ -75,24 +75,18 @@ Request:
 
 ---
 
-## Sessions (Rooms)
+## Test sessions
+
+A session is an internal container for the attempts of one quiz; students start it with `POST /quizzes/{id}/start-attempt` (see **Test taking** below).
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/sessions/` | Admin | Create a room session for a quiz |
-| POST | `/sessions/join` | Student | Join a room by 6-digit code |
-| POST | `/sessions/{id}/start` | Admin | Start the quiz (broadcasts via WS) |
-| POST | `/sessions/{id}/submit` | Student | Submit answers |
-| GET | `/sessions/{id}/leaderboard` | Any | Get sorted leaderboard |
-| GET | `/sessions/{id}/analytics` | Admin | Get session analytics |
-| GET | `/sessions/{id}/participants` | Admin | Get currently connected WS users |
-| POST | `/sessions/{id}/end` | Admin | End session (broadcasts via WS) |
-
-### POST /sessions/join
-```json
-Request:  { "room_code": "123456" }
-Response: { "id": "...", "quiz_id": "...", "room_code": "123456", "status": "waiting" }
-```
+| PUT | `/sessions/{id}/autosave` | Student | Save in-progress answers without scoring (every ~30 s) |
+| POST | `/sessions/{id}/submit` | Student | Submit and score answers (`?auto=true` when the timer ends) |
+| GET | `/sessions/attempts/my` | Student | The student's finished attempts |
+| GET | `/sessions/attempts/{attempt_id}/response-sheet-pdf` | Owner / Admin | Response sheet PDF |
+| GET | `/sessions/{id}/leaderboard` | Any | Ranked results for the test |
+| GET | `/sessions/{id}/analytics` | Any | Test analytics (students see their own) |
 
 ### POST /sessions/{id}/submit
 ```json
@@ -100,12 +94,13 @@ Request:
 {
   "answers": [
     { "question_id": "...", "selected_option": 0, "time_taken_sec": 45 },
-    { "question_id": "...", "selected_option": null, "time_taken_sec": 0 }
+    { "question_id": "...", "response_text": "12.5", "time_taken_sec": 60 }
   ],
   "time_taken_sec": 180
 }
 Query param: ?auto=true  (for auto-submission when timer expires)
 ```
+A submit arriving more than 90 s after the server deadline scores the last autosaved answers.
 
 ---
 
@@ -113,41 +108,13 @@ Query param: ?auto=true  (for auto-submission when timer expires)
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|
-| POST | `/llm/explain` | Any | Get AI explanation for a question (cached in DB) |
-| POST | `/llm/find-answer` | Any | Ask LLM to identify correct option |
+| POST | `/llm/explain` | Any | AI explanation for a question (cached in DB). Students only after submitting that test |
 
 ### POST /llm/explain
 ```json
 Request:  { "question_id": "..." }
 Response: { "explanation": "The correct answer is A because..." }
 ```
-
----
-
-## WebSocket
-
-### WS /ws/{room_code}?token={access_token}
-
-Connect to a live quiz room. Token is passed as query param (browser WebSocket limitation).
-
-**Server → Client events:**
-
-| Event type | Payload | When |
-|------------|---------|------|
-| `room:participants` | `{ participants: [{user_id, name, role}] }` | On connect |
-| `room:joined` | `{ user_id, name, role }` | User joins |
-| `room:left` | `{ user_id, name }` | User disconnects |
-| `quiz:started` | `{ session_id, time_per_q_sec, total_questions }` | Admin starts quiz |
-| `quiz:ended` | `{}` | Admin ends session |
-| `leaderboard:update` | `{ entries: [{rank, student_name, score, ...}] }` | After each submit |
-| `student:submitted` | `{ name, score, total, rank }` | Admin only — who just submitted |
-| `error` | `{ message }` | Auth or room error |
-
-**Client → Server events:**
-
-| Event type | When |
-|------------|------|
-| `ping` | Keep-alive (sent every 25s by client) |
 
 ---
 
@@ -204,9 +171,9 @@ Definitions used everywhere:
 
 ---
 
-## Test taking (room codes removed)
+## Test taking
 
-Students start tests directly; there is no room code, waiting room or WebSocket any more.
+Students start published tests directly from their home screen during the availability window.
 
 | Method | Endpoint | Auth | Description |
 |--------|----------|------|-------------|

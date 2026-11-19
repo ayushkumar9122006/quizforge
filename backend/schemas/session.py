@@ -7,7 +7,6 @@ from models.all_models import SessionStatus, AttemptStatus
 class SessionOut(BaseModel):
     id: str
     quiz_id: str
-    room_code: str
     status: SessionStatus
     started_at: Optional[datetime] = None
     ended_at: Optional[datetime] = None

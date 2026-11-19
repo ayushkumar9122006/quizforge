@@ -4,41 +4,40 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        BROWSER (Student/Admin)                   │
+│              BROWSER / INSTALLED PWA (Student · Admin)           │
 │                                                                   │
-│   React + Vite + Tesseract.js                                    │
-│   ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│   │  Login   │  │  Admin   │  │ Student  │  │  Analytics   │   │
-│   │  Screen  │  │Dashboard │  │  Quiz    │  │  Dashboard   │   │
-│   └──────────┘  └──────────┘  └──────────┘  └──────────────┘   │
+│   React 18 + Vite + Recharts + Tesseract.js (OCR)                │
+│   Admin: tests, PDF import, answer keys & chapters, batch view   │
+│   Student: fullscreen test, report, My Progress, notebook,       │
+│            weak-chapter practice, streaks & badges               │
 │                                                                   │
-│   services/api.js (Axios + JWT interceptor)                      │
-│   services/wsService.js (WebSocket + auto-reconnect)             │
-└──────────────────┬──────────────────────────┬────────────────────┘
-                   │ HTTP/REST                 │ WebSocket
-                   ▼                           ▼
+│   services/api.js (Axios + JWT refresh)                          │
+│   attemptStorage.js (local copy) + autosave every 30 s           │
+│   sw.js (service worker: app shell only)                         │
+└──────────────────────────────┬──────────────────────────────────┘
+                               │ HTTPS / REST (JSON)
+                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                     FastAPI Backend (Python)                      │
 │                                                                   │
-│  routers/          services/           utils/                    │
-│  ├ auth.py         ├ llm_service.py    ├ security.py (JWT/bcrypt)│
-│  ├ quiz.py         ├ analytics_service ├ dependencies.py         │
-│  ├ session.py      └ ...               └ openrouter.py           │
-│  ├ llm.py                                                         │
-│  └ ws.py           websocket/                                    │
-│                    ├ manager.py (ConnectionManager)              │
-│                    └ events.py  (event factory functions)        │
+│  routers/            services/                                   │
+│  ├ auth.py           ├ pdf_importer_service + pdf_layout_parser  │
+│  ├ quiz.py           ├ progress_service (rank, percentile, trend)│
+│  ├ session.py        ├ notebook_service (spaced re-attempts)     │
+│  ├ progress.py       ├ motivation_service (streaks, badges)      │
+│  ├ notebook.py       ├ chapter_tagger + jee_syllabus             │
+│  ├ motivation.py     ├ response_sheet_service (PDF)              │
+│  ├ notice.py         ├ media_service (Cloudinary, optional)      │
+│  └ llm.py            └ llm_service (OpenRouter, optional)        │
 │                                                                   │
-│  SQLAlchemy ORM (async) + Alembic migrations                     │
-└──────────────────┬──────────────────────────┬────────────────────┘
-                   │                           │
-                   ▼                           ▼
-┌──────────────────────┐         ┌─────────────────────────────┐
-│   PostgreSQL DB       │         │   OpenRouter API (LLM)       │
-│                       │         │   meta-llama/llama-3.1-8b   │
-│   9 tables            │         │   (free tier)               │
-│   (see ER below)      │         └─────────────────────────────┘
-└──────────────────────┘
+│  SQLAlchemy 2.0 (async) + Alembic migrations                     │
+└──────────────┬──────────────────────────────┬───────────────────┘
+               ▼                              ▼
+┌──────────────────────────┐   ┌─────────────────────────────────┐
+│ PostgreSQL 16 (Neon)     │   │ OpenRouter (AI chapter tags,     │
+│ 17 tables (see below)    │   │ explanations) · Cloudinary       │
+└──────────────────────────┘   │ (images) · Resend (email OTP)    │
+                               └─────────────────────────────────┘
 ```
 
 ---
@@ -91,11 +90,10 @@ options
 ├── image  (file path)
 └── content_type  [text | image | both]
 
-quiz_sessions
+quiz_sessions          (internal container for one quiz's attempts)
 ├── id (PK)
 ├── quiz_id (FK → quizzes)
-├── room_code (UNIQUE, 6-digit)
-├── status  [waiting | active | completed]
+├── status  [active | completed]
 ├── started_at
 └── ended_at
 
@@ -173,37 +171,26 @@ Edits if needed → Save & Publish
 
 ---
 
-## Real-time Flow (WebSockets)
+## Test Flow
 
 ```
-Admin creates room (POST /sessions/)
-        │ room_code returned
-        ▼
-Admin connects WS /ws/{room_code}?token=...
+Admin publishes a test with an availability window
         │
-Students join (POST /sessions/join)
+Student opens it from Home (POST /quizzes/{id}/start-attempt)
+        │ server creates/reuses the quiz session and the student's attempt,
+        │ returns questions (no answer keys) + any autosaved answers
+        ▼
+Fullscreen test page
+        │ answers kept locally and autosaved (PUT /sessions/{id}/autosave, ~30 s)
+        │ exiting fullscreen = strike; resume works on any device
+        ▼
+Submit (POST /sessions/{id}/submit) — or auto-submit at the deadline
+        │ server-side deadline (+90 s grace, else last autosave is scored)
+        │ scores, ranks, updates leaderboard, files mistakes into the notebook
+        ▼
+Report: rank, percentile, subject ranks, chapter mistakes, time strategy
         │
-Students connect WS /ws/{room_code}?token=...
-        │ server broadcasts room:joined to all
-        │ admin sees participant list update live
-        ▼
-Admin clicks Start (POST /sessions/{id}/start)
-        │ server broadcasts quiz:started to all
-        ▼
-All students enter QuizAttempt simultaneously
-        │
-Each student submits (POST /sessions/{id}/submit)
-        │ server scores, updates leaderboard table
-        │ broadcasts leaderboard:update to ALL
-        │ broadcasts student:submitted to ADMIN only
-        ▼
-Admin sees live leaderboard + submission toasts
-Students see live leaderboard update after their submit
-        │
-Admin ends session (POST /sessions/{id}/end)
-        │ broadcasts quiz:ended
-        ▼
-All clients show final results
+My Progress / Students & Progress update across tests
 ```
 
 ---
@@ -216,6 +203,6 @@ All clients show final results
 | Backend | FastAPI, SQLAlchemy (async), Alembic, Pydantic v2 |
 | Database | PostgreSQL 16 |
 | Auth | JWT (python-jose), bcrypt (passlib) |
-| Real-time | FastAPI WebSockets |
+| Offline / mobile | Installable PWA, service worker, fullscreen test mode |
 | LLM | OpenRouter (meta-llama/llama-3.1-8b-instruct:free) |
 | Deployment | Docker, Render / Railway / Vercel |

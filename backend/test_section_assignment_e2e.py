@@ -259,7 +259,6 @@ async def run_regression_tests():
         session = QuizSession(
             id="session-sec-test",
             quiz_id=saved_quiz_a.id,
-            room_code="SEC123",
             status="active"
         )
         db.add(session)

@@ -258,7 +258,7 @@ async def test_async_submission_e2e():
         for q in [q1, q2, q3, q4, q5]:
             await db.refresh(q)
 
-        q_sess = QuizSession(quiz_id=quiz.id, room_code="123456")
+        q_sess = QuizSession(quiz_id=quiz.id)
         db.add(q_sess)
         await db.commit()
         await db.refresh(q_sess)
@@ -285,7 +285,7 @@ async def test_async_submission_e2e():
         assert att_res1.correct_count == 5
 
         # Test Case B: Multi-Correct partials and numerical tolerance
-        q_sess2 = QuizSession(quiz_id=quiz.id, room_code="223456")
+        q_sess2 = QuizSession(quiz_id=quiz.id)
         db.add(q_sess2)
         await db.commit()
         await db.refresh(q_sess2)
@@ -309,7 +309,7 @@ async def test_async_submission_e2e():
         assert att_res2.score == 6.0, f"Expected 6.0, got {att_res2.score}"
 
         # Test Case C: Multi-Correct with wrong options selected (-1 absolute penalty) and numerical invalid format
-        q_sess3 = QuizSession(quiz_id=quiz.id, room_code="323456")
+        q_sess3 = QuizSession(quiz_id=quiz.id)
         db.add(q_sess3)
         await db.commit()
         await db.refresh(q_sess3)

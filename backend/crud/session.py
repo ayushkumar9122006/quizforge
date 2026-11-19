@@ -142,8 +142,8 @@ async def get_session_by_id(db: AsyncSession, session_id: str) -> Optional[QuizS
 async def get_attempt(db: AsyncSession, session_id: str, student_id: str) -> Optional[Attempt]:
     """
     Read-only lookup — does NOT create an attempt.
-    Used to verify a student actually joined this session (via a valid
-    room code, through /sessions/join) before allowing a submission.
+    Used to verify the student actually started this test
+    (POST /quizzes/{id}/start-attempt) before allowing a submission.
     """
     result = await db.execute(
         select(Attempt).where(

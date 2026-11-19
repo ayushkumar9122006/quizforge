@@ -2,8 +2,7 @@
 Session Router — attempts, autosave, results, leaderboard, analytics.
 
 Students start tests directly (POST /quizzes/{id}/start-attempt); a session is
-an internal container for the attempts of one quiz. The old room-code / live
-room flow (join, start, end, WebSocket broadcasts) has been removed.
+an internal container for the attempts of one quiz.
 """
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import Response
@@ -90,7 +89,7 @@ async def submit(
     if not attempt:
         raise HTTPException(
             status_code=403,
-            detail="You must join this room with a valid room code before submitting.",
+            detail="Start this test before submitting it.",
         )
 
     # Idempotent response: If the attempt has already been submitted, return existing result

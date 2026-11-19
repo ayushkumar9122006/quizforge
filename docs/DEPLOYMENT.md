@@ -114,26 +114,6 @@ sudo certbot --nginx -d yourdomain.com
 
 ---
 
-## WebSocket Note for Production
-
-WebSockets need the proxy to support upgrade headers.
-
-**Render/Railway:** Supported natively — no config needed.
-
-**Nginx (self-hosted):** Add to your nginx config:
-```nginx
-location /ws/ {
-    proxy_pass         http://localhost:8000;
-    proxy_http_version 1.1;
-    proxy_set_header   Upgrade $http_upgrade;
-    proxy_set_header   Connection "upgrade";
-    proxy_set_header   Host $host;
-    proxy_read_timeout 86400;
-}
-```
-
----
-
 ## Environment Variables Reference
 
 | Variable | Required | Description |
