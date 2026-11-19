@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased] — Sign in with Google
+
+### Added
+- **"Continue with Google"** on the student and admin login screens (Google Identity Services). The backend verifies Google's signed ID token against Google's public keys (`utils/google_auth.py`, no new dependency) and issues the normal QuiZee session.
+  - existing email → logs into that account; new email (student screen) → student account created with the Google name and photo;
+  - Google never creates admins; admin and student screens can't be swapped;
+  - `GOOGLE_CLIENT_ID` on the backend only (the login screen fetches it from `GET /auth/google/config`); unset hides the button.
+- `backend/test_google_login.py` (local RSA key in place of Google's).
+
+### Fixed
+- Two logins by the same user within one second crashed with a duplicate refresh token; refresh tokens now carry a random `jti`.
+
 ## [Unreleased] — Brevo for password-reset OTP emails
 
 ### Added

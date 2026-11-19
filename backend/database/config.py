@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     openrouter_model: str = os.getenv("OPENROUTER_MODEL", "meta-llama/llama-3.1-8b-instruct:free")
     frontend_url: str = os.getenv("FRONTEND_URL", "http://localhost:5173")
     upload_dir: str = os.getenv("UPLOAD_DIR", "uploads")
+    # "Sign in with Google": OAuth Web client ID(s), comma-separated. Not a secret.
+    google_client_id: str = os.getenv("GOOGLE_CLIENT_ID", "")
     # Email configuration: Brevo HTTPS API (primary), Resend API, then SMTP.
     # Render's free plan blocks SMTP ports, so an HTTPS API is the reliable option there.
     brevo_api_key: str = os.getenv("BREVO_API_KEY", "")

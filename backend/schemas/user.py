@@ -64,3 +64,13 @@ class ResetPasswordRequest(BaseModel):
 
 class GenericMessageResponse(BaseModel):
     message: str
+
+
+class GoogleLoginRequest(BaseModel):
+    credential: str = Field(min_length=20)      # ID token from Google Identity Services
+    role: UserRole = UserRole.student           # which login screen the user used
+
+
+class GoogleConfigOut(BaseModel):
+    enabled: bool
+    client_id: Optional[str] = None

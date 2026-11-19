@@ -9,7 +9,7 @@
  *   register()  — creates account then auto-logs in
  */
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import { login as apiLogin, logout as apiLogout, register as apiRegister, getStoredUser, getStoredTokens } from '../services/authService.js'
+import { login as apiLogin, logout as apiLogout, register as apiRegister, googleLogin as apiGoogleLogin, getStoredUser, getStoredTokens } from '../services/authService.js'
 
 const AuthContext = createContext(null)
 
@@ -40,6 +40,12 @@ export function AuthProvider({ children }) {
     return data.user
   }, [])
 
+  const loginWithGoogle = useCallback(async ({ credential, role }) => {
+    const data = await apiGoogleLogin({ credential, role })
+    setUser(data.user)
+    return data.user
+  }, [])
+
   const register = useCallback(async ({ email, name, password, role }) => {
     await apiRegister({ email, name, password, role })
     const data = await apiLogin({ email, password })
@@ -54,7 +60,7 @@ export function AuthProvider({ children }) {
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout, register }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, register, loginWithGoogle }}>
       {children}
     </AuthContext.Provider>
   )

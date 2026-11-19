@@ -4,11 +4,11 @@ from database.config import get_db
 from schemas.user import (
     UserCreate, UserLogin, TokenOut, UserOut, RefreshRequest,
     ForgotPasswordRequest, VerifyOtpRequest, VerifyOtpResponse,
-    ResetPasswordRequest, GenericMessageResponse
+    ResetPasswordRequest, GenericMessageResponse, GoogleLoginRequest, GoogleConfigOut
 )
 from models.all_models import UserRole, User
 from crud.user import get_user_by_email, create_user, save_refresh_token, get_refresh_token, revoke_refresh_token
-from utils.security import verify_password, create_access_token, create_refresh_token, decode_token
+from utils.security import verify_password, create_access_token, create_refresh_token, decode_token, hash_password
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 
@@ -47,6 +47,69 @@ async def login(data: UserLogin, db: AsyncSession = Depends(get_db)):
         refresh_token=refresh_token,
         user=UserOut.model_validate(user),
     )
+
+
+async def _issue_tokens(db: AsyncSession, user: User) -> TokenOut:
+    access_token = create_access_token({"sub": user.id, "role": user.role})
+    refresh_token, expires_at = create_refresh_token({"sub": user.id})
+    await save_refresh_token(db, user.id, refresh_token, expires_at)
+    return TokenOut(access_token=access_token, refresh_token=refresh_token, user=UserOut.model_validate(user))
+
+
+@router.get("/google/config", response_model=GoogleConfigOut)
+async def google_config():
+    """Tells the login screen whether to show "Continue with Google" (the client ID is public)."""
+    from utils.google_auth import google_client_ids
+    ids = google_client_ids()
+    return GoogleConfigOut(enabled=bool(ids), client_id=ids[0] if ids else None)
+
+
+@router.post("/google", response_model=TokenOut)
+async def google_login(data: GoogleLoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Sign in with Google.
+      • Email already has an account → log into it (same role as the screen used).
+      • New email on the student screen → create a student account.
+      • Admin screen → only existing admin accounts; Google never creates admins.
+    """
+    import secrets
+    from utils.google_auth import verify_google_id_token, GoogleTokenError
+    try:
+        claims = await verify_google_id_token(data.credential)
+    except GoogleTokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
+
+    email = str(claims["email"]).lower().strip()
+    wants_admin = str(getattr(data.role, "value", data.role)).lower() == "admin"
+    user = await get_user_by_email(db, email)
+
+    if user:
+        is_admin = str(getattr(user.role, "value", user.role)).lower() == "admin"
+        if wants_admin and not is_admin:
+            raise HTTPException(status_code=403, detail="This Google account is not an admin. Use the Student login.")
+        if is_admin and not wants_admin:
+            raise HTTPException(status_code=403, detail="This Google account is an admin account. Use the Admin login.")
+        if not user.is_active:
+            raise HTTPException(status_code=403, detail="Account is deactivated")
+        if not user.avatar_url and claims.get("picture"):
+            user.avatar_url = str(claims["picture"])[:500]
+        return await _issue_tokens(db, user)
+
+    if wants_admin:
+        raise HTTPException(status_code=403, detail="No admin account uses this Google email.")
+
+    name = (claims.get("name") or claims.get("given_name") or email.split("@")[0]).strip()[:255]
+    user = User(
+        email=email,
+        name=name,
+        # random unusable password: they sign in with Google, or set one via "Forgot password"
+        hashed_password=hash_password(secrets.token_urlsafe(32)),
+        role=UserRole.student.value,
+        avatar_url=(str(claims["picture"])[:500] if claims.get("picture") else None),
+    )
+    db.add(user)
+    await db.flush()
+    return await _issue_tokens(db, user)
 
 
 @router.post("/refresh", response_model=TokenOut)
