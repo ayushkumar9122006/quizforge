@@ -35,8 +35,14 @@ services:
         value: uploads
       - key: ENVIRONMENT
         value: production
+      - key: BREVO_API_KEY
+        sync: false          # Brevo → SMTP & API → API Keys (starts with xkeysib-). Primary OTP sender
+      - key: BREVO_SENDER_EMAIL
+        sync: false          # An address verified in Brevo → Senders (e.g. your Gmail)
+      - key: BREVO_SENDER_NAME
+        value: QuiZee
       - key: RESEND_API_KEY
-        sync: false          # Set in Render dashboard (e.g. re_...)
+        sync: false          # Optional fallback (e.g. re_...)
       - key: EMAIL_FROM
         value: onboarding@resend.dev
       - key: SMTP_HOST
