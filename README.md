@@ -79,6 +79,7 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 | `FRONTEND_URL` | Allowed CORS origin | `http://localhost:5173` |
 | `UPLOAD_DIR` | Directory for static file mounts (auto-created on boot) | `uploads` |
 | `CLOUDINARY_URL` | `cloudinary://<api_key>:<api_secret>@<cloud_name>`. When set, question/option images are stored on Cloudinary instead of the DB | *(unset)* |
+| `GOOGLE_CLIENT_ID` | OAuth **Web** client ID for "Continue with Google" (`…apps.googleusercontent.com`). The login screen reads it from the backend, so only the backend needs it. Unset = button hidden | *(unset)* |
 | `BREVO_API_KEY` | Brevo **API** key (`xkeysib-…`, not the SMTP key) for password-reset OTP emails. Sent over HTTPS, so it works on hosts that block SMTP (Render free) | *(unset)* |
 | `BREVO_SENDER_EMAIL` / `BREVO_SENDER_NAME` | Sender verified in Brevo → Senders, and the name students see | *(unset)* / `QuiZee` |
 | `RESEND_API_KEY`, `SMTP_*` | Optional fallbacks, tried after Brevo. With no provider set (outside production), the OTP is printed in the backend terminal | *(unset)* |
@@ -90,6 +91,16 @@ Copy `.env.example` → `.env` at the project root (and/or `backend/.env`, `fron
 | Variable | Description | Default |
 |---|---|---|
 | `VITE_BACKEND_URL` | Backend base URL for the REST API | `http://localhost:8000` |
+
+---
+
+### Sign in with Google (optional)
+1. [Google Cloud Console](https://console.cloud.google.com) → **Google Auth Platform** → set up the app (name, support email).
+2. **Clients → Create client → Web application.** Under **Authorised JavaScript origins** add your frontend URL (e.g. `https://quizforge-nine.vercel.app`) and `http://localhost:5173`. No redirect URI or client secret is needed.
+3. **Audience → Publish app**, so any Google account can sign in (in "Testing" only listed test users can).
+4. Set `GOOGLE_CLIENT_ID` on the backend.
+
+Rules: an existing account with the same email signs straight in; a new email on the Student screen gets a student account; Google never creates admins (admin sign-in works only for emails that already are admins).
 
 ---
 

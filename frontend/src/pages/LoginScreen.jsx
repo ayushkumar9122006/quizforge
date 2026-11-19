@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react'
 import { useAuth } from '../context/AuthContext.jsx'
 import { sendForgotOtp, verifyForgotOtp, resetPasswordWithOtp } from '../services/authService.js'
 import PasswordInput from '../components/Common/PasswordInput.jsx'
+import GoogleSignInButton from '../components/Common/GoogleSignInButton.jsx'
 
 export default function LoginScreen() {
-  const { login, register } = useAuth()
+  const { login, register, loginWithGoogle } = useAuth()
 
   const [role,  setRole]  = useState(null)       // null | 'admin' | 'student'
   const [mode,  setMode]  = useState('login')    // 'login' | 'register'
@@ -33,6 +34,18 @@ export default function LoginScreen() {
     }, 1000)
     return () => clearInterval(timer)
   }, [resendCooldown])
+
+  // "Continue with Google"
+  const handleGoogle = async (credential) => {
+    setErr(''); setBusy(true)
+    try {
+      await loginWithGoogle({ credential, role: role === 'admin' ? 'admin' : 'student' })
+    } catch (e) {
+      setErr(e?.response?.data?.detail || 'Google sign-in failed. Try again or use your password.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // Normal login / register submit
   const handleSubmit = async () => {
@@ -481,12 +494,23 @@ export default function LoginScreen() {
           {busy ? '...' : (role === 'admin' || mode === 'login') ? 'Sign in →' : 'Create account →'}
         </button>
 
+        <GoogleSignInButton
+          key={`${role}-${mode}`}
+          onCredential={handleGoogle}
+          disabled={busy}
+          text={role === 'student' && mode === 'register' ? 'signup_with' : 'continue_with'}
+        />
+
         {/* Demo credentials hint */}
         <div style={{ marginTop:16, padding:'10px 12px', background:'#f5f3ff', borderRadius:9, fontSize:12, color:'#6366f1', lineHeight:1.7 }}>
           <strong>Demo credentials:</strong><br/>
           Admin: admin@quizee.com / Admin@123<br/>
           Student: student@quizee.com / Student@123
         </div>
+
+        <p style={{ marginTop:14, fontSize:12, color:'#9ca3af', textAlign:'center' }}>
+          <a href="/privacy.html" style={{ color:'#6b7280' }}>Privacy Policy</a> · <a href="/terms.html" style={{ color:'#6b7280' }}>Terms of Use</a>
+        </p>
       </div>
     </div>
   )

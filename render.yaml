@@ -35,6 +35,8 @@ services:
         value: uploads
       - key: ENVIRONMENT
         value: production
+      - key: GOOGLE_CLIENT_ID
+        sync: false          # "Sign in with Google": OAuth Web client ID (…apps.googleusercontent.com). Not a secret
       - key: BREVO_API_KEY
         sync: false          # Brevo → SMTP & API → API Keys (starts with xkeysib-). Primary OTP sender
       - key: BREVO_SENDER_EMAIL

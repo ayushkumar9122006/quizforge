@@ -1,6 +1,7 @@
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from datetime import datetime, timedelta
+import secrets
 from typing import Optional
 from database.config import settings
 
@@ -25,7 +26,9 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def create_refresh_token(data: dict) -> tuple[str, datetime]:
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(days=settings.refresh_token_expire_days)
-    to_encode.update({"exp": expire, "type": "refresh"})
+    # jti: a random ID so two logins in the same second never produce the same
+    # token (refresh_tokens.token is UNIQUE; an identical token used to crash login)
+    to_encode.update({"exp": expire, "type": "refresh", "jti": secrets.token_hex(16)})
     token = jwt.encode(to_encode, settings.secret_key, algorithm=settings.algorithm)
     return token, expire
 
