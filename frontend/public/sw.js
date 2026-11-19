@@ -31,14 +31,18 @@ self.addEventListener('fetch', event => {
   if (url.origin !== self.location.origin) return          // API, CDN images, fonts: straight to network
 
   if (req.mode === 'navigate') {
+    // Plain pages (privacy.html, terms.html) are not the app: never store them as the app shell
+    const isPage = url.pathname.endsWith('.html') && url.pathname !== '/index.html'
     event.respondWith(
       fetch(req)
         .then(res => {
-          const copy = res.clone()
-          caches.open(VERSION).then(c => c.put('/index.html', copy))
+          if (!isPage && res.ok) {
+            const copy = res.clone()
+            caches.open(VERSION).then(c => c.put('/index.html', copy))
+          }
           return res
         })
-        .catch(() => caches.match('/index.html'))
+        .catch(() => isPage ? caches.match(req).then(hit => hit || caches.match('/index.html')) : caches.match('/index.html'))
     )
     return
   }

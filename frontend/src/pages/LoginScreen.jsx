@@ -507,6 +507,10 @@ export default function LoginScreen() {
           Admin: admin@quizee.com / Admin@123<br/>
           Student: student@quizee.com / Student@123
         </div>
+
+        <p style={{ marginTop:14, fontSize:12, color:'#9ca3af', textAlign:'center' }}>
+          <a href="/privacy.html" style={{ color:'#6b7280' }}>Privacy Policy</a> · <a href="/terms.html" style={{ color:'#6b7280' }}>Terms of Use</a>
+        </p>
       </div>
     </div>
   )
