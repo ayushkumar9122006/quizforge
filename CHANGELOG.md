@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased] — Fast import with Cloudinary
+
+### Fixed
+- With `CLOUDINARY_URL` set, saving a test waited for every image (~200 for an imported JEE paper) to upload first, so the import screen sat on "Importing…" for minutes. Tests now save immediately and their images move to Cloudinary in a background job right after (`move_quiz_images_to_cloudinary`); failed uploads stay inline.
+
 ## [Unreleased] — Sign in with Google
 
 ### Added
