@@ -24,7 +24,7 @@ import httpx
 
 from database.config import settings
 
-_CONCURRENCY = 6
+_CONCURRENCY = 10
 
 
 def _credentials() -> Optional[tuple[str, str, str]]:
@@ -95,7 +95,7 @@ async def externalize_question_images(questions: list, folder: Optional[str] = N
         return 0
     sem = asyncio.Semaphore(_CONCURRENCY)
     uploaded = 0
-    async with httpx.AsyncClient(timeout=60) as client:
+    async with httpx.AsyncClient(timeout=45) as client:
         async def one(obj, attr):
             nonlocal uploaded
             async with sem:
@@ -106,3 +106,32 @@ async def externalize_question_images(questions: list, folder: Optional[str] = N
                     print(f"[media] Cloudinary upload failed, keeping inline image: {e}")
         await asyncio.gather(*(one(o, a) for o, a in targets))
     return uploaded
+
+
+async def move_quiz_images_to_cloudinary(quiz_id: str) -> int:
+    """
+    Background job, run right after a quiz is saved: replace the quiz's inline
+    (base64) images with Cloudinary URLs. The admin doesn't wait for ~200
+    uploads; students see the same images either way (inline until moved).
+    Images that fail to upload simply stay inline.
+    """
+    if not is_enabled():
+        return 0
+    from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+    from database.config import AsyncSessionLocal
+    from models.all_models import Question
+    started = time.time()
+    try:
+        async with AsyncSessionLocal() as db:
+            questions = (await db.execute(
+                select(Question).options(selectinload(Question.options)).where(Question.quiz_id == quiz_id)
+            )).scalars().all()
+            moved = await externalize_question_images(questions)
+            if moved:
+                await db.commit()
+        print(f"[media] Moved {moved} image(s) of quiz {quiz_id[:8]} to Cloudinary in {time.time() - started:.1f}s")
+        return moved
+    except Exception as e:   # never let a background job crash the server
+        print(f"[media] Background image move failed for quiz {quiz_id[:8]}: {e}")
+        return 0

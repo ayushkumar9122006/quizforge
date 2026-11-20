@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.responses import Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -31,13 +31,18 @@ router = APIRouter(prefix="/quizzes", tags=["Quizzes"])
 @router.post("/", response_model=QuizOut, status_code=status.HTTP_201_CREATED)
 async def create(
     data: QuizCreate,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
-    from services.media_service import externalize_question_images
-    await externalize_question_images(data.questions)   # base64 images → Cloudinary URLs (if configured)
+    from services.media_service import is_enabled, move_quiz_images_to_cloudinary
     quiz = await create_quiz(db, data, admin.id)
-    return await get_quiz(db, quiz.id)
+    out = await get_quiz(db, quiz.id)
+    if is_enabled():
+        # save now, move images to Cloudinary after the response (an imported paper has ~200)
+        await db.commit()
+        background.add_task(move_quiz_images_to_cloudinary, quiz.id)
+    return out
 
 
 @router.get("/my", response_model=List[QuizSummaryOut])
@@ -428,6 +433,7 @@ async def import_analyze_pdf(
 async def import_confirm_questions(
     quiz_id: str,
     payload: BulkImportConfirmRequest,
+    background: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -445,9 +451,11 @@ async def import_confirm_questions(
     if not payload.questions:
         raise HTTPException(status_code=400, detail="No questions provided for import")
 
-    from services.media_service import externalize_question_images
-    await externalize_question_images(payload.questions)
+    from services.media_service import is_enabled, move_quiz_images_to_cloudinary
     updated_quiz = await add_questions_to_quiz(db, quiz_id, payload.questions)
+    if is_enabled():
+        await db.commit()
+        background.add_task(move_quiz_images_to_cloudinary, quiz_id)
     return updated_quiz
 
 
